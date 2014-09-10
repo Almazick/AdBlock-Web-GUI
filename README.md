@@ -19,5 +19,5 @@ dnsmasqlog="/tmp/var/log/messages*"		-	dnsmasq log location, by default it's usi
 
 tmpfolder="/tmp"						- 	location of your temp folder
 
-dnsmasq_external_log="n"				-	If you are using external dnsmasq log then enter "y" otherwise "n" for default syslog
+dnsmasq_external_log="n"				-	for external dnsmasq log then enter "y" otherwise "n" for default syslog
 
