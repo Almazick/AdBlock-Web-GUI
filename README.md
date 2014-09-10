@@ -7,6 +7,8 @@ Version: 1.3
 
 Using Tomato firmware just put all the files in /var/wwwext/
 
+You can access GUI by openning in browser http://routerIP/ext/ads.sh 
+
 adblockpath="/var/wwwext/adblock.sh" 	-	location of adblock.sh by Jerrm
 
 pixelservip="192.168.1.254"			 	-	Pixelserv IP address	
