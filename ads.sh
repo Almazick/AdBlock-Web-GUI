@@ -8,7 +8,7 @@ pixelservip="192.168.1.254"				# Pixelserv IP address
 scriptname="ads.sh"						# this script name
 dnsmasqlog="/tmp/var/log/messages*"		# dnsmasq log location, by default it's using syslog
 tmpfolder="/tmp"						# location of your temp folder
-dnsmasq_external_log="n"				# If you are using external dnsmasq log then enter "y" otherwise "n" for default syslog
+dnsmasq_external_log="n"				# for external dnsmasq log then enter "y" otherwise "n" for default syslog
 ##############################################################################
 if grep -q 'echo $(wc -l < "$blocklist") > /tmp/adscount' $adblockpath
 then
