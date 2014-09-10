@@ -10,10 +10,8 @@ dnsmasqlog="/tmp/var/log/messages*"		# dnsmasq log location, by default it's usi
 tmpfolder="/tmp"						# location of your temp folder 
 dnsmasq_external_log="n"				# for external dnsmasq log then enter "y" otherwise "n" for default syslog
 ######################################################
-if grep -q 'adscount' $adblockpath
+if ! grep -q 'adscount' $adblockpath
 then
-echo ""
-else
 sed '/elog "$(wc -l < "$blocklist") unique hosts to block"/ a \echo $(wc -l < "$blocklist") > dummyname5/adscount' $adblockpath > $tmpfolder/tmp090; mv $tmpfolder/tmp090 $adblockpath
 sed -i "s|dummyname5|"$tmpfolder"|g" $adblockpath
 chmod +x $adblockpath
