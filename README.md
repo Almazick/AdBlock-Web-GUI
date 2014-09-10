@@ -4,6 +4,7 @@ AdBlock Web Gui
 AdBlock Web Gui for Jerrm script
 
 AdBlock Web GUI by Almaz
+==============
 Version: 1.3
 Using Tomato firmware just put all the files in /var/wwwext/
 
