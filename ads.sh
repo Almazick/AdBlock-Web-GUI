@@ -1,15 +1,16 @@
 #!/bin/sh
 # AdBlock Web GUI by Almaz
-# Version: 1.31
+# Version: 1.4
 # Using Tomato firmware just put all the files in /var/wwwext/
 ##############################################################################
 adblockpath="/var/wwwext/adblock.sh"  	# location of adblock.sh by Jerrm
-pixelservip="192.168.3.254"				# Pixelserv IP address		
+pixelservip="192.168.1.254"				# Pixelserv IP address		
 scriptname="ads.sh"						# this script name
 dnsmasqlog="/tmp/var/log/messages*"		# dnsmasq log location, by default it's using syslog
 tmpfolder="/tmp"						# location of your temp folder 
 dnsmasq_external_log="n"				# for external dnsmasq log then enter "y" otherwise "n" for default syslog
-######################################################
+dnsmasqconf="/etc/dnsmasq.custom"		# location for dnsmasq.custom
+###############################################################################
 if ! grep -q 'adscount' $adblockpath
 then
 sed '/elog "$(wc -l < "$blocklist") unique hosts to block"/ a \echo $(wc -l < "$blocklist") > dummyname5/adscount' $adblockpath > $tmpfolder/tmp090; mv $tmpfolder/tmp090 $adblockpath
@@ -22,6 +23,10 @@ case $QUERY_STRING in
   force)
   REFRESHTIME=5;
   NEXTACTION="?doforce";
+  ;;
+  dnsmasqtoggle)
+  REFRESHTIME=5;
+  NEXTACTION="?dodnsmasqtoggle";
   ;;
   start)
   REFRESHTIME=5;
@@ -122,6 +127,30 @@ case $QUERY_STRING in
   echo '<b>adblock actions:</b>'
   echo '<br><i>please wait...</i>'
   echo '<p></div>'
+  ;;
+  dodnsmasqtoggle)
+  echo 'DNSMASQ LOG<p></div>'
+
+  echo '<div id="actions">'
+  echo '<b>adblock actions:</b>'
+  echo '<br><i>please wait...</i>'
+  echo '<p></div>'
+
+  echo '<div id="blocks"><pre>'
+    if grep -Fxq 'log-queries' $dnsmasqconf
+	then
+	touch $tmpfolder/dnsmasqtmp
+	sed 's/\<log-queries\>//g' $dnsmasqconf > "$tmpfolder/dnsmasqtmp"
+	mv $tmpfolder/dnsmasqtmp $dnsmasqconf
+	echo ""
+	echo "DNSMASQ LOG DISABLED"
+	else
+	echo 'log-queries' >> $dnsmasqconf
+	echo ""
+	echo "DNSMASQ LOG ENABLED"
+	fi
+  service dnsmasq restart
+  echo '</pre><p></div>'
   ;;
   doforce)
   echo 'force complete<p></div>'
@@ -232,9 +261,6 @@ case $QUERY_STRING in
 
   echo '<div id="blocks">'
   echo 'last blocked domain names:<br><pre>'
-  #grep -B1 $pixelservip $dnsmasqlog | egrep 'query.* from ' | grep -v 'from 127.0.0.1' | awk '{printf("%s %s %s) %-13s %s\n", $1,$2,$3,$8,$6)}' | sed 's/.\{15\}$//' | sed 's/[)]//'| sed 's/\(.*\)-\(.*-\)/\1foo39820\2/' | sed 's/^.*foo39820//' | tail -n 100
-  #grep -B1 $pixelservip $dnsmasqlog | egrep 'query.* from ' | grep -v 'from 127.0.0.1' | awk '{printf("%s %s %s) %-13s %s\n", $1,$2,$3,$8,$6)}' | sed 's/.\{15\}$//' | sed 's/[)]//'|sed 's/^.*messages[.]0-//' | sed 's/^.*messages-//'
-  #egrep -B1 "config .* is $pixelservip" $dnsmasqlog | egrep 'query.* from ' | grep -v 'from 127.0.0.1' | tail -n 100 | sed 's|^\(.*:..:..\) .*: quer|\1 |' | awk '{printf("%s %s %s) %-13s %s\n", $1,$2,$3,$7,$5)}' | sed -r 's:^/tmp/var/log/messages(.0)*-::' | sed 's/[)]//'
   if [ $dnsmasq_external_log = "n" ]
 	then
 		egrep -B1 "config .* is $pixelservip" $dnsmasqlog | egrep 'query.* from ' | grep -v 'from 127.0.0.1' | tail -n 100 | sed 's|^\(.*:..:..\) .*: quer|\1 |' | awk '{printf("%s %s %s) %-13s %s\n", $1,$2,$3,$7,$5)}' | sed -r 's:^/tmp/var/log/messages(.0)*-::' | sed 's/[)]//'
@@ -252,6 +278,14 @@ echo `uptime`
 cat << EOF
 <br>page will automatically refresh in <span id="timer">$REFRESHTIME</span> seconds
 <br>...or click <a href='$scriptname'>here</a> to refresh manually
+EOF
+if grep -Fxq 'log-queries' $dnsmasqconf
+then
+echo '<br>dnsmasq log enabled click to <a href='$scriptname?dnsmasqtoggle'>DISABLE</a>'
+else
+echo '<br>dnsmasq log disabled click to <a href='$scriptname?dnsmasqtoggle'>ENABLE</a>'
+fi
+cat << EOF
 </div>
 </body>
 </html>

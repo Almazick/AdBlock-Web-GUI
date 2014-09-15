@@ -3,7 +3,7 @@ AdBlock Web GUI by Almaz
 
 AdBlock Web Gui for Jerrm script
 
-Version: 1.31
+Version: 1.4
 
 Using Tomato firmware just put all the files in /var/wwwext/
 
@@ -21,3 +21,4 @@ tmpfolder="/tmp"						- 	location of your temp folder
 
 dnsmasq_external_log="n"				-	for external dnsmasq log then enter "y" otherwise "n" for default syslog
 
+dnsmasqconf="/etc/dnsmasq.custom"		-	location for dnsmasq.custom
