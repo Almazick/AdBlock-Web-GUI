@@ -2,14 +2,14 @@
 # AdBlock Web GUI by Almaz
 # Version: 1.4
 # Using Tomato firmware just put all the files in /var/wwwext/
-##############################################################################
-adblockpath="/var/wwwext/adblock.sh"  	# location of adblock.sh by Jerrm
-pixelservip="192.168.1.254"				# Pixelserv IP address		
-scriptname="ads.sh"						# this script name
-dnsmasqlog="/tmp/var/log/messages*"		# dnsmasq log location, by default it's using syslog
-tmpfolder="/tmp"						# location of your temp folder 
-dnsmasq_external_log="n"				# for external dnsmasq log then enter "y" otherwise "n" for default syslog
-dnsmasqconf="/etc/dnsmasq.custom"		# location for dnsmasq.custom
+###############################################################################
+adblockpath="/var/wwwext/adblock.sh"    # location of adblock.sh by Jerrm
+pixelservip="192.168.1.254"             # Pixelserv IP address    
+scriptname="ads.sh"                     # this script name
+dnsmasqlog="/tmp/var/log/messages*"     # dnsmasq log location, by default it's using syslog
+tmpfolder="/tmp"                        # location of your temp folder
+dnsmasq_external_log="n"                # for external dnsmasq log then enter "y" otherwise "n" for default syslog
+dnsmasqconf="/etc/dnsmasq.custom"       # location for dnsmasq.custom
 ###############################################################################
 if ! grep -q 'adscount' $adblockpath
 then
