@@ -1,6 +1,6 @@
 #!/bin/sh
 # AdBlock Web GUI by Almaz
-# Version: 1.4
+# Version: 1.41
 # Using Tomato firmware just put all the files in /var/wwwext/
 # You can access GUI by openning in browser http://routerIP/ext/ads.sh
 ###############################################################################
@@ -280,11 +280,14 @@ cat << EOF
 <br>page will automatically refresh in <span id="timer">$REFRESHTIME</span> seconds
 <br>...or click <a href='$scriptname'>here</a> to refresh manually
 EOF
+if [ -f $dnsmasqconf ];
+then
 if grep -Fxq 'log-queries' $dnsmasqconf
 then
 echo '<br>dnsmasq log enabled click to <a href='$scriptname?dnsmasqtoggle'>DISABLE</a>'
 else
 echo '<br>dnsmasq log disabled click to <a href='$scriptname?dnsmasqtoggle'>ENABLE</a>'
+fi
 fi
 cat << EOF
 </div>
