@@ -1,6 +1,6 @@
 #!/bin/sh
 # AdBlock Web GUI by Almaz
-# Version: 1.41
+# Version: 1.42
 # Using Tomato firmware just put all the files in /var/wwwext/
 # You can access GUI by openning in browser http://routerIP/ext/ads.sh
 ###############################################################################
@@ -264,7 +264,7 @@ case $QUERY_STRING in
   echo 'last blocked domain names:<br><pre>'
   if [ $dnsmasq_external_log = "n" ]
 	then
-		egrep -B1 "config .* is $pixelservip" $dnsmasqlog | egrep 'query.* from ' | grep -v 'from 127.0.0.1' | tail -n 100 | sed 's|^\(.*:..:..\) .*: quer|\1 |' | awk '{printf("%s %s %s) %-13s %s\n", $1,$2,$3,$7,$5)}' | sed -r 's:^/tmp/var/log/messages(.0)*-::' | sed 's/[)]//'
+		egrep -B1 "config .* is $pixelservip" $dnsmasqlog | egrep 'query.* from ' | grep -v 'from 127.0.0.1' | tail -n 100 | sed 's|^\(.*:..:..\) .*: quer|\1 |' | awk '{printf("%s %s %s) %-13s %s\n", $1,$2,$3,$7,$5)}' | sed -r 's:^/tmp/var/log/messages(.0)*-::' | sed 's/[)]//' | sort -r
 	else
 		grep -B1 $pixelservip $dnsmasqlog | egrep 'query.* from ' | grep -v 'from 127.0.0.1' | awk '{printf("%s %s %s %-13s %s\n", $1,$2,$3,$8,$6)}' | tail -n 100 | sort -r 
   fi
