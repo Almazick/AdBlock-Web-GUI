@@ -233,7 +233,7 @@ case $QUERY_STRING in
   echo down
   fi
   echo '<br>iptables '
-  echo `iptables -L | grep -c $pixelservip`/4
+  echo `iptables -L | grep -c $pixelservip`
 
   echo '<br>pixelserv '
   if ps | grep -q pixelserv ; then
