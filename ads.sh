@@ -1,6 +1,6 @@
 #!/bin/sh
 # AdBlock Web GUI by Almaz
-# Version: 1.42
+# Version: 1.5
 # Using Tomato firmware just put all the files in /var/wwwext/
 # You can access GUI by openning in browser http://routerIP/ext/ads.sh
 ###############################################################################
@@ -18,6 +18,7 @@ sed '/elog "$(wc -l < "$blocklist") unique hosts to block"/ a \echo $(wc -l < "$
 sed -i "s|dummyname5|"$tmpfolder"|g" $adblockpath
 chmod +x $adblockpath
 fi
+
 REFRESHTIME=60
 NEXTACTION=""
 case $QUERY_STRING in
@@ -94,10 +95,18 @@ body {
   border: 1px solid #888;
 }
 #blocks {
-  margin: 100px 0px 0px 0px;
+  float: left;
+  margin: 105px 0px 0px 0px;  
   padding: 1px 1px 1px 1px;
   display: block;
-  padding: 0px;
+  overflow: hidden;
+}
+#blocks2 {
+  float: right;
+  margin: 105px 350px 0px 0px;
+  overflow: hidden;
+  padding: 1px 1px 1px 1px;
+  display: block;
 }
 </style>
 </head>
@@ -117,7 +126,10 @@ body {
   }
 </script>
 EOF
-
+  echo '<div id="blocks2">'
+  echo 'Not blocked last domain names:<br><pre>'
+  egrep -B1 "reply .* is .*" /tmp/var/log/messages* | grep -v 'forwarded' | grep -v 'NODATA-IPv6' | sort -r | sed '/ reply /!d;s//&\n/;s/.*\n//;:a;/ is /bb;$!{n;ba};:b;s//\n&/;P;D' | awk '!a[$0]++' | tail -n 200
+  echo '<p></div>'
 echo '<div id="status">'
 echo '<b>adblock status:</b><br>'
 case $QUERY_STRING in
@@ -163,6 +175,7 @@ case $QUERY_STRING in
 
   echo '<div id="blocks"><pre>'
   $adblockpath force
+  rm /var/wwwext/source*
   echo '</pre><p></div>'
   ;;
   start)
@@ -203,6 +216,7 @@ case $QUERY_STRING in
 
   echo '<div id="blocks"><pre>'
   $adblockpath restart
+  rm /var/wwwext/source*
   echo '</pre><p></div>'
   ;;
   stop)
@@ -261,7 +275,7 @@ case $QUERY_STRING in
   echo '<p></div>'
 
   echo '<div id="blocks">'
-  echo 'last blocked domain names:<br><pre>'
+  echo 'Last blocked domain names:<br><pre>'
   if [ $dnsmasq_external_log = "n" ]
 	then
 		egrep -B1 "config .* is $pixelservip" $dnsmasqlog | egrep 'query.* from ' | grep -v 'from 127.0.0.1' | tail -n 100 | sed 's|^\(.*:..:..\) .*: quer|\1 |' | awk '{printf("%s %s %s) %-13s %s\n", $1,$2,$3,$7,$5)}' | sed -r 's:^/tmp/var/log/messages(.0)*-::' | sed 's/[)]//' | sort -r

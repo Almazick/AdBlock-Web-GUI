@@ -3,13 +3,13 @@ AdBlock Web GUI by Almaz
 
 AdBlock Web Gui for Jerrm script
 
-Version: 1.42
+Version: 1.5
 
 Using Tomato firmware just put all the files in /var/wwwext/
 
 You can access GUI by openning in browser http://routerIP/ext/ads.sh 
 
-<img src="http://i31.photobucket.com/albums/c358/Almazick/AdBlockWebGui_zps176c6163.jpg">
+<img src="http://i31.photobucket.com/albums/c358/Almazick/AdBlockWebGui_zps44845949.jpg">
 
 adblockpath="/var/wwwext/adblock.sh" 	-	location of adblock.sh by Jerrm
 
