@@ -1,6 +1,6 @@
 #!/bin/sh
 # AdBlock Web GUI by Almaz
-# Version: 1.5
+# Version: 1.51
 # Using Tomato firmware just put all the files in /var/wwwext/
 # You can access GUI by openning in browser http://routerIP/ext/ads.sh
 ###############################################################################
@@ -67,7 +67,7 @@ body {
   left: 0px;
   padding: 1px 1px 1px 1px;
   width: 150px;
-  height: 100px;
+  height: 115px;
   position: fixed;
   background-color: #ffffff;
   border: 1px solid #888;
@@ -78,7 +78,7 @@ body {
   left: 150px;
   padding: 1px 1px 1px 1px;
   width: 150px;
-  height: 100px;
+  height: 115px;
   position: fixed;
   background-color: #ffffff;
   border: 1px solid #888;
@@ -89,23 +89,24 @@ body {
   left: 300px;
   padding: 1px 1px 1px 1px;
   width: 100%;
-  height: 100px;
+  height: 115px;
   position: fixed;
   background-color: #ffffff;
   border: 1px solid #888;
 }
 #blocks {
-  float: left;
-  margin: 105px 0px 0px 0px;  
-  padding: 1px 1px 1px 1px;
+  float:left;
+  width:50%;    
+  overflow:auto;
+  margin:auto;
+  margin-top: 120px;
   display: block;
-  overflow: hidden;
 }
 #blocks2 {
   float: right;
-  margin: 105px 350px 0px 0px;
-  overflow: hidden;
-  padding: 1px 1px 1px 1px;
+  width:50%; 
+  overflow:auto;
+  margin-top: 120px;
   display: block;
 }
 </style>
