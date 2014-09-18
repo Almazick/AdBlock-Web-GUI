@@ -175,7 +175,6 @@ case $QUERY_STRING in
 
   echo '<div id="blocks"><pre>'
   $adblockpath force
-  rm /var/wwwext/source*
   echo '</pre><p></div>'
   ;;
   start)
@@ -216,7 +215,6 @@ case $QUERY_STRING in
 
   echo '<div id="blocks"><pre>'
   $adblockpath restart
-  rm /var/wwwext/source*
   echo '</pre><p></div>'
   ;;
   stop)
