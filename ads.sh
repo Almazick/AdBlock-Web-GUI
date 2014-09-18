@@ -129,7 +129,7 @@ body {
 EOF
   echo '<div id="blocks2">'
   echo 'Not blocked last domain names:<br><pre>'
-  egrep -B1 "reply .* is .*" /tmp/var/log/messages* | grep -v 'forwarded' | grep -v 'NODATA-IPv6' | sort -r | sed '/ reply /!d;s//&\n/;s/.*\n//;:a;/ is /bb;$!{n;ba};:b;s//\n&/;P;D' | awk '!a[$0]++' | tail -n 200
+  egrep -B1 "reply .* is .*" $dnsmasqlog | grep -v 'forwarded' | grep -v 'NODATA-IPv6' | sort -r | sed '/ reply /!d;s//&\n/;s/.*\n//;:a;/ is /bb;$!{n;ba};:b;s//\n&/;P;D' | awk '!a[$0]++' | tail -n 200
   echo '<p></div>'
 echo '<div id="status">'
 echo '<b>adblock status:</b><br>'
