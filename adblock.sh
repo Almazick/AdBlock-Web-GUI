@@ -16,6 +16,14 @@
 ## Changes from haarp's 4.5:
 ## =========================
 ##
+## Script assumes a current Tomato version as of 2013 or later.
+##
+## The script is targeted and designed for modern Tomato builds.  It uses many
+## Tomato features that may or may not exist with other firmware such as
+## firewall and shutdown event scripts, dnsmasq.custom support, etc.
+##
+## No attempt or consideration is made for compatibility for other platforms.
+##
 ## 2013-11-30
 ## ----------
 ## 'cron' option - add to scheduler for updates
@@ -68,7 +76,7 @@
 ##      $prefix can be redefined in the config file to point elsewhere.
 ##
 ## set defaults for following config variables in main script (new):
-##   $BRIDGE, $PIXEL_IP, $PIXEL_OPTS, $RAMLIST, $PIXEL_IP, $PIXEL_OPTS, $RAMLIST, $CONF
+##   $BRIDGE, $PIXEL_IP, $PIXEL_OPTS, $RAMLIST, $CONF
 ##   all can be redefined in config file.
 ##
 ## default $BRIDGE to nvram lan_ifname instead of br0, config file overrides (new)
@@ -199,8 +207,91 @@
 ## add shutdown autorun for better handling of no-reboot shutdown/init sequences
 ## re-establish $redirip if necessary
 ## honor gui log settings
-## don't write dnsmasq files if blocklist is missing - there was an un-reproduced bug report
+## don't write dnsmasq files if blocklist is missing - there was an
+##   un-reproduced bug report
 ## add some more debug output
+##
+## 2014-09-27
+## ----------
+## Basic support of web interface:
+##   Creates link to itself at $weblink under web root.
+##   (default: /www/user/adblock.sh).
+##
+##   When called via link, adblock runs as a wrapper for a user defined
+##   script. Adblock loads the config, initalizes the adblock environment
+##   exports useful variables and calls the script specified by $webscript
+##   (default: adblockweb.sh) to generate the web interface.
+##
+##   $weblink and $webscript can be specified in config file.
+##
+##   A functional adblock status page should be acheivable with no need for
+##   additional config files or hard coded paths in the cgi script.
+##
+##   In addition to the basic adblock setttings, variables added to the adlock
+##   config file whose names begin with "web" will aslo be exported for use by
+##   $webscript. This should allow for a single config file if $webscript needs
+##   additional settings.
+##
+##   A basic adblockweb.sh is now included with adblock.sh.
+##
+## Detect if running from web (looks for REQUEST_METHOD in environment)
+## and delay initial output until environment is initialized and we know
+## if adblock is a wrapper for $webscript.
+##
+## Delay check for other sessions until after $webscript checks.
+##
+## For HOST mode log error if we cannot create $hostlink.
+##
+## Loopback interface added to default value for $FWBRIDGE (FWBRIDGE="br+ lo")
+## to allow access from router to status function in new versions of pixelserv.
+##
+## Truncate $CONF (dnsmasq.custom) instead of deleting the file
+## when stopping adblock or using host mode. Baby step for non-tomato platforms.
+## Should allow users to add a dnsmasq-conf directive to dnsmasq.conf pointing to
+## $CONF. If specified as a conf-file directive, a missing $CONF  will cause
+## dnsmasq to hang in a loop during startup.  Leaving a truncated $CONF
+## will allow dnsmasq to start. Adblock still assumes it has complete control
+## of $CONF, any manual changes to $CONF would be overwritten by adblock.
+##
+##
+## Add record count footer to blocklist file
+##
+## Allow logging to be enabled in $CONF. Setting dnsmasq_logqueries=1 will add
+## the "log-queries" directive to $CONF.
+##
+## 2014-10-26
+## ----------
+## Make sure we are looking for the right pixelserv instance.
+##
+## Truncate $blocklist instead of deleting for the same reasons as $CONF.
+##
+## Don't assume last octet of broadcast address is 255.
+##
+## Add $dnsmasq_custom variable to config file:
+## !**** CAUTION ****!
+##   use at your own risk
+##
+##   value will be appended to $CONF as entered
+##
+##   example:
+##   dnsmasq_custom='
+##   log-facility=/tmp/mylogfile
+##   log-dhcp
+##   log-queries
+##   local-ttl=600
+##   '
+##
+##   WARNING: dnsmasq is very sensitive and WILL NOT START with invalid
+##   entries, entries that conflict with directives in the primary
+##   config, and some duplicated entries
+##
+##   no validation of the content is performed by adblock
+##
+##   !! do not use unless you know what you are doing !!
+## !**** CAUTION ****!
+##
+## Web interface now includes black/white list and config editor and
+## ability to add to black/white list from report listings
 ##
 
 #########################################################
@@ -212,7 +303,6 @@
 
 umask 0022
 
-alias elog='logger -t ADBLOCK -s'
 alias iptables='/usr/sbin/iptables'
 alias nslookup='/usr/bin/nslookup'
 alias ls='/bin/ls'
@@ -220,23 +310,40 @@ alias df='/bin/df'
 
 pidfile=/var/run/adblock.pid
 
+release="2014-10-26"
+
+# buffer for log messages in cgi envionment
+msgqueue=""
+
 # router memory
 ram=$(awk '/^MemTotal/ {print int($2/1024)}' < /proc/meminfo)
 
 # this script
 me="$(cd $(dirname "$0") && pwd)/${0##*/}"
 
+# Is this run as CGI?
+[ -n "$REQUEST_METHOD" ] && cgi=1
+
 # path to script -  was script called via an autorun link?
-[ ${me##*"."} = "fire" -o  ${me##*"."} = "wanup" -o  ${me##*"."} = "shut" ] && {
+if [ ${me##*"."} = "fire" -o  ${me##*"."} = "wanup" -o  ${me##*"."} = "shut" ]; then
 	# yes - find true script folder
  	s="$( ls -l "$me" )"; s="${s##*" -> "}"
 	binprefix="$(cd "$(dirname "$me")" && cd "$(dirname "$s")" && pwd)"
+	adblockscript="$binprefix/${s##*"/"}"
 	islink=1
-} || {
+elif [ -L $me -a "$cgi" = "1" -a -e $me.weblink ]; then
+	# called via a link, we are in cgi environment, and weblink file exists
+	# so follow the link for binprefix location
+	s="$( ls -l "$me" )"; s="${s##*" -> "}"
+	binprefix="$(cd "$(dirname "$me")" && cd "$(dirname "$s")" && pwd)"
+	adblockscript="$binprefix/${s##*"/"}"
+	islink=1
+else
 	# no -  use folder of $me
 	binprefix="$(dirname "$me")"
+	adblockscript="$me"
 	islink=0
-}
+fi
 
 # base name to use when looking for config files
 configname=adblock
@@ -329,6 +436,45 @@ cronid=adblock.update
 # minimum age of blocklist in hours before we re-build
 age2update=4
 
+# symlink for web interface
+weblink=/www/user/adblock.sh
+
+# script for web interface
+webscript=adblockweb.sh
+
+# path to dnsmasq.conf
+dnsmasq_config="/etc/dnsmasq.conf"
+
+# enable logging - a value of "1" will add "log-queries" to $CONF
+# and restart dnsmasq if necessary
+#
+# has no effect if logging is already enabled in dnsmasq.conf
+dnsmasq_logqueries=""
+
+# !**** CAUTION ****!
+# dnsmasq_ custom - use at your own risk
+#
+# value will be appended to $CONF as entered
+#
+# example:
+# dnsmasq_custom='
+# log-facility=/tmp/mylogfile
+# log-dhcp
+# log-queries
+# local-ttl=600
+# '
+#
+# !! do not use unless you know what you are doing !!
+#
+# dnsmasq is very sensitive and will not start with invalid entries, entries
+# that conflict with directives in the primary config, and some duplicated
+# entries
+#
+# no validation of the content is performed by adblock
+#
+# !**** CAUTION ****!
+dnsmasq_custom=""
+
 # list mode
 LISTMODE="OPTIMIZE"
 
@@ -340,7 +486,7 @@ FWRULES=STRICT
 
 # default interface(s) for firewall rules
 # supports multiple interfaces as well, ie: "br0 br1 br3"
-FWBRIDGE="br+"
+FWBRIDGE="br+ lo"
 
 # set haarp config defaults - config file overrides
 # 0: disable pixelserv, 1-254: last octet of IP to run pixelserv on
@@ -355,17 +501,32 @@ RAMLIST=0
 # dnsmasq custom config (must be sourced by dnsmasq!) confused? then leave this be!
 CONF=/etc/dnsmasq.custom
 
-#whitelist and blacklist contents
+# whitelist and blacklist contents
 BLACKLIST=""
 WHITELIST=""
+
 
 #########################################################
 # End of default values					#
 #########################################################
 
+elog() {
+#echo $1
+#return
+
+	logger -t "ADBLOCK[$$]" "$@"
+#return
+	[ "$cgi" = "1" ] && {
+		msgqueue=$msgqueue"ADBLOCK[$$}: $@\n"
+	} || echo "ADBLOCK[$$]: $@" >&2
+}
+
 pexit() {
+	[ "$msgqueue" != "" ] && echo -ne $msgqueue >&2
+	cgi=0
 	elog "Exiting $me $@"
 	rm -f "$pidfile" &>/dev/null
+	logvars2
 	exit $@
 }
 
@@ -375,6 +536,7 @@ dlog() {
 
 logvars() {
 	[ "$debug" != "1" ] && return
+	elog "Running on $( nvram get os_version )"
 	elog "Initialized Environment:"
 	set | ( while read line; do elog "    $line"; done )
 	elog "Mounted Drives"
@@ -387,6 +549,47 @@ logvars() {
 	ls -lh $listprefix | ( while read line; do elog "    $line"; done )
 	elog "listtmp folder - $listtmp"
 	ls -lh $listtmp | ( while read line; do elog "    $line"; done )
+	elog "config file contents - $config"
+	cat $config | ( while read line; do elog "    $line"; done )
+}
+
+logvars2() {
+	[ "$debug" != "1" ] && return
+	elog "Environment at exit:"
+	elog "Free Space"
+	df -h | ( while read line; do elog "    $line"; done )
+	elog "prefix folder - $prefix"
+	ls -lh $prefix | ( while read line; do elog "    $line"; done )
+	elog "listprefix folder - $listprefix"
+	ls -lh $listprefix | ( while read line; do elog "    $line"; done )
+	elog "listtmp folder - $listtmp"
+	ls -lh $listtmp | ( while read line; do elog "    $line"; done )
+	elog "blocklist contents - $blocklist"
+	head $blocklist | ( while read line; do elog "    $line"; done )
+	elog "    ..."
+	tail -n2 $blocklist | ( while read line; do elog "    $line"; done )
+	elog "CONF contents - $CONF"
+	cat $CONF | ( while read line; do elog "    $line"; done )
+}
+
+readdnsmasq() {
+	[ "$3" != "r" ] && loopcheck=""
+	loopcheck="$loopcheck ""$1"
+	for c in $( head -n 100 $1 | sed 's/#.*$//g' | sed -e 's/^[ \t]*//' 2> /dev/null )
+	do
+		l="${c%=*}"
+		r="${c#*=}"
+		case "$l" in
+		$2 )
+		echo "$r"
+      		;;
+		conf-file )
+		if ! echo $loopcheck | grep "$r " ; then
+			readdnsmasq "$r" "$2" "r"
+		fi
+		;;
+		esac
+	done
 }
 
 startserver() {
@@ -395,7 +598,7 @@ startserver() {
 			elog "Setting up $redirip on $BRIDGE:$vif"
 			ifconfig $BRIDGE:$vif $redirip up
 		fi
-		if ps | grep -v grep | grep -q "$pixelbin $redirip"; then
+	if ps | grep -v grep | grep -q "${pixelbin##*"/"} $redirip"; then
 			elog "pixelserv already running, skipping"
 		else
 			elog "Setting up pixelserv on $redirip"
@@ -423,9 +626,9 @@ stopserver() {
 rmfiles() {
 	rm -f "$fire" &>/dev/null
 	rm -f "$shut" &>/dev/null
-	rm -f "$CONF" &>/dev/null
 	rm -f "$hostlink" &>/dev/null
 	rm -f "$tmpstatus" &>/dev/null
+	echo -n > "$CONF"
 }
 
 stop() {
@@ -438,7 +641,13 @@ stop() {
 }
 
 restartdns() {
-	[ $LISTMODE = "HOST" ] && {
+	# enable logging if needed
+	[ "$dnsmasq_logqueries" = "1" ] && echo "log-queries" >> $CONF
+
+	# add custom dnsmasq settings
+	[ "$dnsmasq_custom" != "" ] && echo "$dnsmasq_custom" >> $CONF
+
+	[ $LISTMODE = "HOST" ] &&  [ "$logging" = "$dnsmasq_logqueries" ] && [ "$dnsmasq_custom" = "" ] && {
 		[ $currentmode = "HOST" -o $currentmode = "OFF" ] && {
 			elog "Loading hosts file for dnsmasq"
 			kill -HUP $( pidof dnsmasq )
@@ -450,20 +659,25 @@ restartdns() {
 }
 
 writeconf() {
-	[ ! -f $blocklist ] && {
-		elog "Blocklist Missing - REMOVING DNSMASQ FILES / ADBLOCK MAY BE DISABLED!"
-		rm -f "$CONF" &>/dev/null
+	echo -n > "$CONF"
+	if [ ! -f $blocklist  -o ! -s $blocklist ]; then
+		elog "Blocklist Missing or empty - REMOVING DNSMASQ FILES / ADBLOCK MAY BE DISABLED!"
 		rm -f "$hostlink" &>/dev/null
 		return
-	}
+	fi
 
-	[ $LISTMODE = "HOST" ] && {
-		rm -f "$CONF" &>/dev/null
-		ln -sf "$blocklist" "$hostlink"
-	} || {
+	if [ $LISTMODE = "HOST" ] ; then
+		elog "Creating Hosts File Link $hostlink"
+		if ! ln -sf "$blocklist" "$hostlink" ; then
+			elog "Could not create host file link $hostlink"
+			rm -f "$hostlink" &>/dev/null
+			return
+		fi
+	else
+		elog "Writing File $CONF"
 		rm -f "$hostlink" &>/dev/null
 		echo "conf-file=$blocklist" > "$CONF"
-	}
+	fi
 }
 
 cleanfiles() {
@@ -474,6 +688,8 @@ cleanfiles() {
 	rm -f $prefix/source-* &> /dev/null
 	rm -f $tmpstatus &> /dev/null
 	rm -f $blocklist  &> /dev/null
+	rm -f $weblink  &> /dev/null
+	rm -f $weblink.weblink  &> /dev/null
 	elog "The following files remain for manual removal:"
 	ls -1Ad $me $config $listprefix/* $prefix/* 2>/dev/null| sort -u | ( while read line; do elog "    $line"; done )
 }
@@ -638,7 +854,7 @@ buildlist() {
 		confgen
 	elif [ "$unchanged" = "1" ]; then
 		elog "Filters unchanged"
-		if [ ! -f "$blocklist" ]; then
+		if [ ! -f "$blocklist" -o ! -s "$blocklist" ]; then
 			elog "Blocklist does not exist"
 			confgen
 		elif [ "$LISTMODE" != "$currentmode" -a "$currentmode" != "OFF" ]; then
@@ -648,11 +864,12 @@ buildlist() {
 			elog "Mode unchanged"
 			# no changes to list and already running in current mode
 			writeconf # re-write conf or link if needed
-			pexit 2   # but nothing else to do, so exit
+			# if logging matches config, nothing else to do, so exit
+			[ "$logging" = "$dnsmasq_logqueries" ] && pexit 2
 		fi
 	else
 		elog "Download failed"
-		if [ -f "$blocklist" -a ! -f "$CONF" ]; then #needlink
+		if [ -s "$blocklist" ] && [ ! -f "$CONF" -o ! -s "$CONF" -o  "$logging" != "$dnsmasq_logqueries" -o "$dnsmasq_custom" != "" ]; then #needlink
 			:
 		else pexit 3
 		fi
@@ -665,7 +882,7 @@ confgen() {
 	tmpwhitelist="$tmp/whitelist.$$.tmp"
 	tmpblocklist="$listtmp/blocklist.$$.tmp"
 
-  	trap 'elog "Signal received, cancelling"; rm -f "$tmpwhitelist" "$tmpblocklist" "$blocklist" &>/dev/null; pexit 140' SIGQUIT SIGINT SIGTERM SIGHUP
+  	trap 'elog "Signal received, cancelling"; rm -f "$tmpwhitelist" "$tmpblocklist"  &>/dev/null; echo -n "" > "$blocklist"; pexit 140' SIGQUIT SIGINT SIGTERM SIGHUP
 
 	# only allow valid hostname characters
 	echo "[^a-zA-Z0-9._-]+"  > "$tmpwhitelist"
@@ -719,12 +936,14 @@ confgen() {
 			sed  -e '/^$/d'  -e  "s/\(.*\)/address=\/\1\/$redirip/" >> "$blocklist"
 		;;
 	esac
+	hostcount=$(( $(wc -l < "$blocklist") - 1 ))
+	echo "# $hostcount records" >> "$blocklist"
 	rm -f "$tmpblocklist" &>/dev/null
 
   	trap -  SIGQUIT SIGINT SIGTERM SIGHUP
 
 	elog "Blocklist generated - $(( $(date +%s) - cg1 )) seconds"
-	elog "$(wc -l < "$blocklist") unique hosts to block"
+	elog "$hostcount unique hosts to block"
 }
 
 loadconfig() {
@@ -798,10 +1017,10 @@ loadconfig() {
 	# redirip can be explicitly set in the config file,	#
 	# but make sure it is valid as no checks are done	#
 	#							#
-	# PIXEL_IP still needs to be set to non-zero for the	#
+	# PIXEL_IP still needs to be set to non-zero for 	#
 	# pixelserv to be started				#
 	#########################################################
-	[ "$redirip" = "" ] && redirip=$(ifconfig $BRIDGE | awk '/inet addr/{print $3}' | awk -F":" '{print $2}' | sed -e "s/255/$PIXEL_IP/")
+	[ "$redirip" = "" ] && redirip=$(ifconfig $BRIDGE | awk '/inet addr/{print $3}' | awk -F":" '{print $2}' | sed -e "s/[0-9]*$/$PIXEL_IP/")
 
 	# $FWRULES must be NONE, LOOSE, or STRICT, if value is unknown, default to STRICT
 	FWRULES=$(echo $FWRULES | tr "[a-z]" "[A-Z]")
@@ -856,6 +1075,24 @@ loadconfig() {
 		}
 	fi
 
+	if [ "$dnsmasq_logqueries" = "1" ]; then
+		elog "Enabling dnsmasq logging"
+	fi
+
+	if [ "$(readdnsmasq "$dnsmasq_config" "log-queries")" != "" ]; then
+		logging=1
+		elog "Logging previously enabled"
+	fi
+
+	dnslogfile="$(readdnsmasq "$dnsmasq_config" "log-facility")"
+	if [ "$dnsmasq_logqueries" = "1" -o "$logging" = "1" ]; then
+		if [ "$dnslogfile" = "" ]; then
+			elog "Logging to syslog"
+		else
+			elog "Logging to $dnslogfile"
+		fi
+	fi
+
 	currentmode=OFF
 	nslookup $testhost &>/dev/null  && currentmode=UNKNOWN
 	nslookup host.$modehost &>/dev/null && currentmode=HOST
@@ -873,8 +1110,60 @@ loadconfig() {
 	lastconfig="$(cat "$prefix/lastmod-config" 2>/dev/null)"
 }
 
+
 elog "Running as $me $@"
 
+loadconfig
+
+# if called via weblink, execute $webscript
+if [ "$me" = "$weblink" ]; then
+	for e in $(set | grep "^web.*=")
+	do
+		export "${e%=*}"
+	done
+	export adblockscript
+	export binprefix
+	export blacklist
+	export blocklist
+	export chain
+	export config
+	export dnsmasq_config
+	export hostlink
+	export listprefix
+	export modehost
+	export pixelbin
+	export prefix
+	export redirip
+	export testhost
+	export weblink
+	export webscript
+	export whitelist
+	export PIXEL_IP
+	export LISTMODE
+	if [ -x "$binprefix/$webscript" ]; then
+		# use the script in this folder if it exists
+		export webscript="$binprefix/$webscript"
+	elif [ -x "$( which "$webscript" )" ]; then
+		export webscript
+	else
+		echo "<html><head><title>Adblock Web Error</title></head><body>
+			ERROR: Web Script $webscript not found or not executable!</body></html>"
+		elog "ERROR: Web Script $webscript not found or not executable!"
+		pexit 0  &> /dev/null
+	fi
+	elog Executing $webscript QUERY_STRING=$QUERY_STRING
+	"$webscript" < /proc/$$/fd/0 &
+	pexit 0 &> /dev/null
+fi
+
+# display queue and disable cgi mode
+[ "$msgqueue" != "" ] && {
+	echo -en $msgqueue >&2
+	msgqueue=""
+ 	cgi=0
+}
+
+# exit if another instance is running
 kill -0 $(cat $pidfile 2>/dev/null) &>/dev/null && {
 	elog "Another instance found ($pidfile), exiting!"
 	exit 1
@@ -882,22 +1171,30 @@ kill -0 $(cat $pidfile 2>/dev/null) &>/dev/null && {
 
 echo $$ > $pidfile
 
-loadconfig
-
-#########################################################
-# if being called via the firewall autorun link	reload	#
-# firewall rules and exit				#
-#########################################################
+# called via .fire autorun link - reload firewall rules and exit
 if [ "$me" = "$fire" -o  "$me" = "$wanup" ]; then
 	elog Updating iptables
 	startserver
 	pexit 0
 fi
 
+# called via .shut autorun link - execute shutdown
 if [ "$me" = "$shut" ]; then
 	elog System shutdown
 	shutdown
 	pexit 0
+fi
+
+# write weblink
+if [ "$weblink" != "" ] &&  [ -x "$binprefix/$webscript" -o -x "$( which "$webscript" )" ]; then
+	if ln -sf "$me" "$weblink" ; then
+		elog "Creating web link $weblink"
+		touch $weblink.weblink
+	else
+		elog "ERROR - could not create web link $weblink"
+	fi
+else
+	elog "ERROR - Web Script $webscript not found or not executable!"
 fi
 
 echo "$@" | grep -q debug && debug=1
@@ -961,17 +1258,17 @@ logvars
 [ "$thisconfig" != "$lastconfig" ] && {
 	elog "Config or script has changed - rebuilding list"
 	restartpix=1
-	rm -f $blocklist &>/dev/null
+	echo -n "" >  $blocklist
 }
 
 # remove existing list if not built for $LISTMODE or $redirip
-[ -f $blocklist ] && {
+[ -s $blocklist ] && {
 	if ! head -n 1 $blocklist | grep -qm1 "MODE=$LISTMODE"; then
 		elog "Existing blocklist is not $LISTMODE mode - removing"
-		rm -f $blocklist &>/dev/null
+		echo -n "" >  $blocklist
 	elif ! head -n 1 $blocklist | grep -qm1 "IP=$redirip"; then
 		elog "Existing blocklist is not for IP $redirip - removing"
-		rm -f $blocklist &>/dev/null
+		echo -n "" >  $blocklist
 	fi
 }
 
@@ -980,7 +1277,7 @@ now=$(date +%s)
 listdate=$(date -r "$blocklist" +%s 2> /dev/null)
 listage=$(( now - listdate ))
 
-[ $listage -gt $(( age2update * 3600 )) -o "$force" = "1" -o "$update" = "1" ] && {
+[ $listage -gt $(( age2update * 3600 )) -o "$force" = "1" -o "$update" = "1" -o ! -s "$blocklist" ] && {
 	buildlist
 } || {
 	elog "List not old enough to update"
