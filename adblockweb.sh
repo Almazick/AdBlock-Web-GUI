@@ -6,6 +6,8 @@
 # This version must be called via adblock.sh, and assumes it will inherit many
 # settings from adblock.  The result should be a simple drop-in script without
 # needing any modifications.
+#
+# See adblock.readme for release notes
 
 # values inherited from adblock
 # =============================
@@ -22,22 +24,31 @@
 # $pixelbin		pixelserv executable
 # $prefix		path to permanent adblock files -  whitelist, blacklist
 # $redirip		ip used for pixelserv
+# $release		adblock script version
 # $testhost		use to test if adblock is loaded - nslookup $testhost
 # $weblink		symlink for web interface
 # $webscript		script for web interface  (this script)
 # $whitelist		whitelist file
-# $PIXEL_IP		last octect of generated pixelserv ip - "0" meaand pixelserv disabled in adblock.
+# $FWBRIDGE		interfaces allowed to access pixelserv
+# $PIXEL_IP		last octect of generated pixelserv ip - "0" means pixelserv disabled in adblock.
 # $LISTMODE		adblock listmode - LEGACY/OPTIMIZE/HOST
 #
 # $web*			any variables added to adblock config beginning with "web" will also be exported
 #
+# $web_refreshtime	page refresh time
+# $web_reportlines	how many lines of history to show in reports, default 100
+##
 
-############################################################################
-scriptname="${weblink##*"/"}" 		# This script's name
-dnsmasqlog="$(nvram get log_file_path)"	# dnsmasq log location, default to syslog
-dnsmasq_external_log="n"		# default to no external log
-myenv=$(set)
-############################################################################
+# This script's name
+scriptname="${weblink##*"/"}"
+
+# dnsmasq log location, default to syslog
+[ "$(nvram get log_file_custom)" = "1" ] && {
+  dnsmasqlog="$(nvram get log_file_path)"
+} || dnsmasqlog="/var/log/messages"
+
+#use busybox nslookup
+alias nslookup=/usr/bin/nslookup
 
 readconf() {
 loopcheck="$loopcheck ""$1"
@@ -133,7 +144,7 @@ cat << EOF
     var filename = this.id.replace("btn_", "");
     var contents = document.getElementById(filename).value;
     var msgElement = document.getElementById("msg_" + filename);
-    var msgTimeout = 10000;
+    var msgTimeout = 7000;
     if ( transformSupport() ) { msgTimeout=1000 };
 
     disableInput(true);
@@ -185,11 +196,13 @@ EOF
 else
 cat << EOF
 
-  function appendText(contents, filename, element) {
+  function appendText() {
+    var element = this;
     var xhr = new XMLHttpRequest();
     var urlEncodedData = "";
     var urlEncodedDataPairs = [];
-
+    var contents = element.parentNode.getAttribute("data-hostname");
+    var filename = element.parentNode.parentNode.getAttribute("data-updatelist");
     urlEncodedDataPairs.push( encodeURIComponent("action") + "=" + encodeURIComponent("appendfile") );
     urlEncodedDataPairs.push( encodeURIComponent("filename") + "=" + encodeURIComponent(filename) );
     urlEncodedDataPairs.push( encodeURIComponent("contents") + "=" + encodeURIComponent(contents) );
@@ -200,7 +213,10 @@ cat << EOF
       if ( xhr.readyState==4 ) {
         if ( xhr.status==200 && xhr.responseText=="SUCCESS") {
             element.parentNode.className="savedline";
-//          alert("File Saved")
+            var lines = element.parentNode.parentNode.querySelectorAll(".line");
+            for ( var i = 0; i < lines.length; i++ ) {
+               if ( lines[i].getAttribute("data-hostname")==element.parentNode.getAttribute("data-hostname") ) { lines[i].className = 'savedline' } ;
+            }
         } else {
           element.parentNode.className="errorline";
           alert( "ERROR \nState: " + xhr.readyState + "\nStatus: " + xhr.status + \
@@ -233,6 +249,27 @@ cat << EOF
 
 EOF
 fi
+}
+
+blockedhosts() {
+  [ "$REFRESHTIME" != "1" ] && egrep -hB1 "$grepstr .* is $redirip" $dnsmasqlog | \
+    egrep 'query.* from ' | grep -v 'from 127.0.0.1' | tail -n $reportlines | sed 's|^\(.*:..:..\) .*: quer|\1 |' | sort -r | \
+    awk '{
+           srcip=$7;
+           if ( hostnames[srcip] == ""  ) {
+             cmd="nslookup "srcip" | awk \47END{print $4}\47";
+             cmd | getline hostname;
+             close (cmd);
+             if ( hostname != "" ) hostnames[srcip] = hostname; else  hostnames[srcip] = srcip;
+            }
+            printf("<span title=\"%s\" class=\"line\" data-hostname=\"%s\">%s %s %s %-15s %s <span class=\"add\" >[+w]</span></span>\n", hostnames[srcip],$5,$1,$2,$3,srcip,$5)
+         }'
+}
+
+resolvedhosts() {
+  [ "$REFRESHTIME" != "1" ] &&  grep  "reply .* is .*" $dnsmasqlog | grep -v "NODATA\|NXDOMAIN" | \
+     sort -r | sed 's/\(.*:[0-9][0-9]:[0-9][0-9]\).*reply \(.*\) is .*/\1 \2/p' | awk '!a[$4]++' | head -n $reportlines | \
+     awk '{printf("<span class=\"line\" data-hostname=\"%s\">%s <span class=\"add\" >[+b]</span></span>\n", $4,$1" "$2" "$3" "$4)}'
 }
 
 if [ "$REQUEST_METHOD" = "POST" ]; then
@@ -274,7 +311,6 @@ readconf $dnsmasq_config
 
 if [ "$facility" != "" ]; then
   dnsmasqlog="$facility"
-  dnsmasq_external_log="y"
 fi
 
 if [ "$LISTMODE" = "HOST" ]; then
@@ -283,7 +319,7 @@ else
   grepstr="config"
 fi
 
-[ "$PIXEL_IP" != "0" ] && pixmsg="retrieving status...<br>" || pixmsg="Pixelserv not enabled - using IP $redirip<br>"
+[ "$PIXEL_IP" != "0" ] && pixmsg="retrieving status...<br>" || pixmsg="adblock is not configured to use pixelserv<br>"
 
 if nslookup $LISTMODE.$modehost 2> /dev/null | grep -q $redirip ; then
   liststatus="up"
@@ -307,21 +343,17 @@ else
   iptstatus="down"
 fi
 
-if ps | grep -v grep | grep -q "${pixelbin##*"/"} $redirip"; then
+if ps | grep -v grep | grep -q "${pixelbin##*"/"} .*$redirip"; then
   pixstatus="up"
 else
   pixstatus="down"
 fi
 
 if [ "$logging" = "1" ] ; then
-  #logstatus="up"
   logstatus="<a href='$scriptname?dodnsmasqtoggle'>enabled</a>"
 else
-  #logstatus="down"
   logstatus="<a href='$scriptname?dodnsmasqtoggle'>DISABLED</a>"
 fi
-
-
 
 optionshtml="<br><a href=$scriptname?force>force</a>
              <br><a href=$scriptname?start>start/update</a>
@@ -343,30 +375,41 @@ statushtml="<span title='$blocklistcontents'>
   <br>ttl: $ttl
 "
 
-REFRESHTIME=120
+pixstat() {
+  if [ "$PIXEL_IP" = "0" ]; then
+     echo $pixmsg
+     exit
+  fi
+  pixmsg=$(wget -q -t 1 -T 5 -O - "http://$redirip/servstats" 2>/dev/null || echo error)
+  if [ "$pixmsg" != "" -a "$pixmsg" != "error" ]; then
+    echo $pixmsg
+  elif [ "$pixmsg" = "error" ]; then
+    echo -n "<HTML><BODY>ERROR: No response from pixelserv."
+    if [ "$pixstatus" = "up" ] &&  ! (echo "$FWBRIDGE" | grep -q lo) ; then
+      echo "..<br>update config - loopback interface is not included in FWBRIDGE($FWBRIDGE)"
+    elif [ "$pixstatus" = "down" ] ; then
+      echo "..<br>pixelserv is not runnng on router for $redirip"
+    fi
+    echo "</BODY></HTML>"
+  else
+    echo Running version of pixelserv does not support status reporting.
+  fi
+}
+
+[ "$web_refreshtime" -eq "$web_refreshtime" ] &> /dev/null && REFRESHTIME=$web_refreshtime || REFRESHTIME=120
+[ "$web_reportlines" -eq "$web_reportlines" ] &> /dev/null && reportlines=$web_reportlines || reportlines=100
 NEXTACTION=""
 action=""
 actionhtml="<br><i>please wait...</i>"
-blockedhosts=""
-resolvedhosts=""
+blockedhosts="<b>logging not enabled - enable in dnsmasq for updated reports.</b>"
+resolvedhosts="$blockedhosts"
 blockwidth="100%"
 divfocus="#f6f6f6"
 focus="blocks"
 
 case $QUERY_STRING in
   dopixstat)
-    if [ "$PIXEL_IP" = "0" ]; then
-       echo $pixmsg
-       exit
-    fi
-    pixmsg=$(wget -q -t 1 -T 5 -O - "http://$redirip/servstats" 2>/dev/null || echo error)
-    if [ "$pixmsg" != "" -a "$pixmsg" != "error" ]; then
-      echo $pixmsg
-    elif [ "$pixmsg" = "error" ]; then
-      echo ERROR: No response from pixelserv.
-    else
-      echo Running version of pixelserv does not support status reporting.
-    fi
+    pixstat
     exit
   ;;
   force)
@@ -465,6 +508,15 @@ cat << EOF
 <script>
   $(pagescript)
 
+  function lineclick()
+  {
+    var ele = this;
+    if ( ele.className=="line" ) {
+      ele.className="clickedline";
+      setTimeout( function() {if (ele.className == "clickedline") { ele.className = "line";}} , 2500);
+    }
+  }
+
   function pixstat()
   {
     var xhr=new XMLHttpRequest();
@@ -487,17 +539,32 @@ cat << EOF
           textareas[i].onkeyup = isDirty;
           textareas[i].onblur = isDirty;
         }
+
         var buttons = document.getElementsByTagName("button");
         for (var i = 0; i < buttons.length; i++) {
           buttons[i].onclick = saveText;
         }
+
+	var elements = document.querySelectorAll(".line");
+        for (var i = 0; i < elements.length; i++) {
+          elements[i].onclick = lineclick;
+        }
+
+	var elements = document.querySelectorAll(".add");
+        for (var i = 0; i < elements.length; i++) {
+          elements[i].onclick = appendText;
+          elements[i].title = "add " + elements[i].parentNode.getAttribute("data-hostname") + " to " + elements[i].parentNode.parentNode.getAttribute("data-updatelist");
+        }
+
 	if (document.getElementById("$focus").focus) { document.getElementById("$focus").focus() };
+
 	pixstat() ;
   }
 
 </script>
 
 <style type="text/css">
+
 html {
   background-color: #ffffff;
   height: 100%;
@@ -527,7 +594,8 @@ div {
   width: 100%;
   top: 0px;
   left: 0px;
-  height: 150px;
+  hssseight: 150px;
+  height: 12em;
   padding: 0px;
   border-bottom-width: 1px;
   overflow: hidden;
@@ -539,6 +607,7 @@ div {
   min-width: 120px ;
   max-width: 180px ;
   border-right-width: 1px;
+  overflow-y: auto;
 }
 #actions {
   height: 100%;
@@ -547,6 +616,7 @@ div {
   min-width: 120px ;
   max-width: 150px ;
   border-right-width: 1px;
+  overflow-y: auto;
 }
 #time {
   height: 100%;
@@ -554,7 +624,7 @@ div {
 }
 #blocks {
   position:fixed;
-  top: 150px;
+  top: 12em;
   bottom: 0px;
   left: 0px;
   width: $blockwidth;
@@ -562,7 +632,7 @@ div {
 }
 #blocks2 {
   position:fixed;
-  top: 150px;
+  top: 12em;
   bottom: 0px;
   right: 0px;
   width: 50%;
@@ -570,7 +640,7 @@ div {
  }
 #msg_blacklist, #msg_whitelist, #msg_config {
   position:absolute;
-  height: 1.6em;
+  height: 1.7em;
   box-sizing: border-box;
   top: 0px;
   left: 0px;
@@ -593,7 +663,7 @@ div {
 #mytext {
   position:absolute;
   box-sizing: border-box;
-  top: 1.5em;
+  top: 1.6em;
   bottom: 0px;
   left: 0px;
   right: 0px;
@@ -638,27 +708,28 @@ input[type="submit"], button {
   transition: background-color 7s ease;
 }
 .line {
-}
-.savedline {
-  color: green;
-  font-weight: bold;
-  transition: color .4s ease;
-}
-.errorline {
-  color: red;
-  font-weight: bold;
-  transition: color .4s ease;
-}
-.line:hover, .errorline:hover {
-  color: blue;
-  font-weight: bold;
-}
-.line:hover .add , .errorline:hover .add {
-  display: inline;
+  color: inherit;
 }
 .add {
   display: none;
   cursor: pointer;
+}
+.savedline {
+  color: green;
+  font-weight: bold;
+  transition: color .5s ease;
+}
+.errorline {
+  color: red;
+  font-weight: bold;
+  transition: color .5s ease;
+}
+.line:hover, .errorline:hover, .clickedline {
+  color: blue;
+  font-weight: bold;
+}
+.line:hover .add , .errorline:hover .add, .clickedline .add {
+  display: inline;
 }
 
 </style>
@@ -667,7 +738,7 @@ input[type="submit"], button {
 <body>
 <div id="banner">
   <div id="status">
-    <b>adblock status:</b><br>
+    <b title="release $release">adblock status:</b><br>
     <span id="statustxt">
       $statushtml
    </span>
@@ -684,7 +755,7 @@ input[type="submit"], button {
     <b>time info:</b><br>
     $(uptime)
     <br><br><b>pixelserv info:</b>
-    <br><span id="pixstat">$pixmsg</span>
+    <br><span  id="pixstat">$pixmsg</span>
     <br><br>$refreshhtml
   </div>
 </div>
@@ -752,20 +823,19 @@ fi
 cat << EOF
   <div id="blocks" accesskey="b" tabindex="1">
     <span title="$dnsmasqlog">
-    $blockedhosts </span>
-    <pre>$( [ "$REFRESHTIME" != "1" ] && egrep -hB1 "$grepstr .* is $redirip" $dnsmasqlog* | \
-            egrep 'query.* from ' | grep -v 'from 127.0.0.1' | tail -n 100 | sed 's|^\(.*:..:..\) .*: quer|\1 |' | \
-            awk '{printf("<span class=\"line\">%s %s %s %-13s %s <span title=\"add %s to whitelist\" class=\"add\" onclick=\"appendText(\x27%s\x27, \x27whitelist\x27, this);\">\[+w]</span></span>\n", $1,$2,$3,$7,$5,$5,$5)}'  | \
-            sort -r )
+    $( [ "$REFRESHTIME" != "1" ] && echo "$blockedhosts") </span>
+    <pre data-updatelist="whitelist">$( blockedhosts )
     </pre>
 
   </div>
   <div id="blocks2" accesskey="r" tabindex="1">
-     $resolvedhosts <br>
-    <pre>$( [ "$REFRESHTIME" != "1" ] &&  tail -n 4000 $dnsmasqlog | grep  "reply .* is .*"  | grep -v "NODATA\|NXDOMAIN" | sort -r | sed   's/.* reply \(.*\) is .*/\1/p' | awk '!a[$0]++' | tail -n 100 | \
-            awk '{printf("<span class=\"line\">%s <span title=\"add %s to blacklist\" class=\"add\" onclick=\"appendText(\x27%s\x27, \x27blacklist\x27, this);\">\[+b]</span></span>\n", $1,$1,$1)}' )
+    $( [ "$REFRESHTIME" != "1" ] && echo "$resolvedhosts") <br>
+    <pre data-updatelist="blacklist">$( resolvedhosts )
     </pre>
   </div>
 </body>
 </html>
+
 EOF
+
+#

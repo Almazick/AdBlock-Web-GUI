@@ -6,292 +6,7 @@
 ##
 ## Use at your own risk
 ##
-## Options:
-## 'force': force updating sources,
-## 'stop': disable Adblock, 'toggle': quickly toggle Adblock on and off
-## 'restart': restart Adblock (e.g. for config changes)
-##
-## TODO: 'clean', 'status' options
-##
-## Changes from haarp's 4.5:
-## =========================
-##
-## Script assumes a current Tomato version as of 2013 or later.
-##
-## The script is targeted and designed for modern Tomato builds.  It uses many
-## Tomato features that may or may not exist with other firmware such as
-## firewall and shutdown event scripts, dnsmasq.custom support, etc.
-##
-## No attempt or consideration is made for compatibility for other platforms.
-##
-## 2013-11-30
-## ----------
-## 'cron' option - add to scheduler for updates
-## 'update' option - require update check regardless of list age
-## don't attempt list update if blocklist less than x hours old
-## blocklist and config files moved out of executable folder
-## $config file can override most path assumptions
-## rebuild blocklist if config, whitelist, or blacklist has changed
-## tweak rules to close connections faster
-## tweak rules to support ssl aware pixelserv - ASSUMES v32 or greater
-## create firewall autorun link to survive firewall reset
-## blank lines and whitespace stripped from whitelist - reduce odds of over matching
-## minor speed improvement with config file based whitelist entries
-##
-## 2013-12-01
-## ----------
-## Fix link to firewall autorun script - was being overwritten.
-##
-## 2013-12-04
-## ----------
-## Find true script folder when called via autorun link and config is located in $binprefix
-## Add back haarp's "cd $prefix" for compatibility
-##
-## 2013-12-11
-## ----------
-## process config based whitelist entries correctly when no whitelist file exists (fix jerrm regression)
-## orphaned source files in $prefix no longer appended to blocklist (fix long standing issue)
-## strip carriage returns from whitelist/blacklist files (new)
-## strip blocklist of any lines with invalid characters (new)
-## firewall rules moved to separate chain for easier/more reliable cleaning (new)
-## allow multiple command line parameters (new)
-## 'fire' option added - updates firewall rules and exit (new)
-## 'clean' option added - cleans script generated files (new)
-## 'debug' option added - very rudimentary, simply logs environment (new)
-##
-## search common folders for config file (new)
-##   1: Check for the file "config" in script folder, if found default to
-##      "legacy" mode for haarp compatibility, assuming all files are in
-##      script folder.
-##
-##   2: If "config" is not found, check for the files listed in $configlist.
-##      The first match found is used as the config file. The config file folder
-##	is used for $prefix if it is already named "adblock", otherwise an
-##	"adblock" subfolder is created as the $prefix folder.
-##
-##	$configlist looks for the config file under the script folder, /jffs,
-##	/opt, /cifs1, /cifs2, /etc, and /tmp.  It also checks if the file exists
-##	in an etc or adblock subfolder for each of the above.
-##
-##      $prefix can be redefined in the config file to point elsewhere.
-##
-## set defaults for following config variables in main script (new):
-##   $BRIDGE, $PIXEL_IP, $PIXEL_OPTS, $RAMLIST, $CONF
-##   all can be redefined in config file.
-##
-## default $BRIDGE to nvram lan_ifname instead of br0, config file overrides (new)
-##
-## add $FWRULES config variable to adjust rule generation - see below discussion. (new)
-##   FWRULES=STRICT : drop connections from unknown interfaces (DEFAULT)
-##   FWRULES=LOOSE  : allow all traffic from unknown interfaces
-##		      (mimics behavior of prior releases)
-##   FWRULES=NONE   : do not generate any firewall rules
-##
-## add $FWBRIDGE config variable for basic vlan support, defaults to 'br+' value (new)
-##
-##   example:	set FWBRIDGE="br+" for most instances when internal vlans exist,
-##		set to "br0" to only allow a single vlan access to pixelserv,
-##		use list of interfaces "br0 br2 tun+" for more unique needs,
-##
-##  ** NOTE **	Original script intent was apparently to only allow pixelserv
-##		requests to the $redirip address. The old rules never worked
-##		correctly in VPN or VLAN environments.
-##
-##		Prior rules always assumed a single vlan. Pixelserv usually
-##		worked when accessed from the additional vlans because the
-##		script rules allowed all traffic from unknown interfaces.
-##
-##		The new rule default (FWRULES=STRICT) now drops all packets
-##		to $redirip from unknown interfaces. "Known" interfaces are
-##		defined with $FWBRIDGE.
-##
-##		Properly setting FWBRIDGE is the recommended action, but old
-##		behavior can be restored by setting FWRULES=LOOSE in config
-##		file.
-##
-##		To disable all rule generation set FWRULES=NONE.
-##
-##		Rules should be functional for default Tomato VLAN behavior
-##		in most instances.
-##
-##		Only a basic/best effort attempt can be made to handle VPN
-##		traffic. Tomato auto VPN rules do not properly clean themselves
-##		and insert an ACCEPT all at the head of the input chain.
-##		Re-running the adblock script after change in VPN connection
-##		status should properly re-apply the rules, but without knowing
-##		all the possible Tomato permutations, no guarantees can be
-##		made. If "up" and "down" scripts are defined for VPN
-##		connections, calling the adblock firewall autorun link or
-##		using the new "fire" option from the up/down scripts should
-##		properly reapply the rules.
-##
-##		Consider setting FWRULES=NONE and customizing rules manually
-##		if using VPN or anything else unusual.
-##
-## 2013-12-22
-## ----------
-## use a more unique virtual interface ID, less chance of conflicts (new)
-## clean up pixelserv and virtual IP if PIXEL_IP=0 (new / bug fix)
-## be a little smarter about firewall rules if PIXEL_IP=0 (new)
-## be a little smarter about stopping pixelserv (new)
-## be a little smarter about dnsmasq restarts (new)
-## allow blacklist only without downloaded source lists - set SOURCES="" in config (new)
-## allow ping to virtual IP from $FWBRIDGE interfaces (new)
-## check for zero byte download files - avoid overwriting prior download on drives with enough space (new)
-## blocklist temp file moved to /tmp to reduce writes to jffs/usb for routers with sufficient free space (new)
-## $listtmp config variable added to override default blocklist temp file location (new)
-## add header to blocklist with $LISTMODE and $redirip (new)
-## add LISTMODE config options for blocklist generation - see below (new for this script - from srouquette's mod)
-##
-## LISTMODE options:
-##
-##   Haarp uses dnsmasq's "address" directive to assign addresses for list dns
-##   names. The address directive does not match just a single host, but will
-##   return the $redirip for ANY host ending in the the given name.
-##
-##   In other words, if only "bar.com" is listed in the blocklist, then
-##   www.bar.com, foo.bar.com, www.foo.bar.com, etc, are also blocked.
-##
-##   Using doubleclick.net as an example, "doubleclick.net" is the domain for
-##   104 entries in a large test list. Since "doubleclick.net" itself is
-##   included in the list without any additional host/sub-domain qualifier, the
-##   extra 103 entries provide no functionality and only eat up memory.
-##
-##   Srouquettes's all-u-need mod removed unneeded subdomains/hosts, but
-##   the option got dropped along the way in haarp's rewrite.
-##
-##   This version puts back srouquettes subdomain removal with some speed
-##   improvements (but still slower than wished). With haarp's method and a
-##   large test list, blocklist building takes 95 seconds and uses 52MB
-##   memory when loaded by dnsmasq. Using the subdomain removal code,
-##   list building takes 360 seconds, but only uses 16MB memory once loaded.
-##   For comparison, Srouquette's removal takes 620 seconds for the same list.
-##
-##   The relative speeds and memory usage vary based on the domain/hosts mix
-##   of the lists used, but the basic ratios appear to hold across several
-##   test cases.
-##
-##   Also restored from srouquette's mod is HOST mode. Features fastest list
-##   building, but less aggressive matching since only the listed hosts are
-##   blocked.  Some may prefer this more precise method, or find it a good
-##   balance between speed, memory usage and functionality.
-##
-##   OPTIMIZE (default - slower build speed, best memory useage)
-##   -----------------------------------------------------------
-##   Removes unneeded subdomains/hosts from the blocklist.  Should be
-##   functionally equivalent to legacy, but with less memory usage. Trade off
-##   is list build speed.
-##
-##   LEGACY (faster, but at the cost of memory)
-##   ------------------------------------------
-##   This is the mode used by haarp's version of the script, it can result in
-##   a list that is two, three, or more times larger than needed.
-##
-##   HOST (fastest build, more specific matching, good memory usage)
-##   ---------------------------------------------------------------
-##   Does not use the "address" directive, but instead creates a hosts file for
-##   the blocklist entries. List build speed is better than LEGACY, memory
-##   usage is is closer to the OPTIMIZE low end than the LEGACY high end. Least
-##   risk of false positives - only matches hosts explicitly listed in the
-##   blocklist.
-##
-##   Another advantage is HOST mode does not require a full dnsmasq restart
-##   when enabling, disabling or updating the blocklist.
-##
-## 2014-01-05
-## ----------
-## make sure file permissions allow dnsmasq to read the file after dropping root
-##   Only an issue with HOST mode because the hosts files are read after dnsmasq
-##   drops root privileges. If adblock is called from wanup with a ppp wan
-##   connection the inherited default mask only allowed root access the file.
-## add shutdown autorun for better handling of no-reboot shutdown/init sequences
-## re-establish $redirip if necessary
-## honor gui log settings
-## don't write dnsmasq files if blocklist is missing - there was an
-##   un-reproduced bug report
-## add some more debug output
-##
-## 2014-09-27
-## ----------
-## Basic support of web interface:
-##   Creates link to itself at $weblink under web root.
-##   (default: /www/user/adblock.sh).
-##
-##   When called via link, adblock runs as a wrapper for a user defined
-##   script. Adblock loads the config, initalizes the adblock environment
-##   exports useful variables and calls the script specified by $webscript
-##   (default: adblockweb.sh) to generate the web interface.
-##
-##   $weblink and $webscript can be specified in config file.
-##
-##   A functional adblock status page should be acheivable with no need for
-##   additional config files or hard coded paths in the cgi script.
-##
-##   In addition to the basic adblock setttings, variables added to the adlock
-##   config file whose names begin with "web" will aslo be exported for use by
-##   $webscript. This should allow for a single config file if $webscript needs
-##   additional settings.
-##
-##   A basic adblockweb.sh is now included with adblock.sh.
-##
-## Detect if running from web (looks for REQUEST_METHOD in environment)
-## and delay initial output until environment is initialized and we know
-## if adblock is a wrapper for $webscript.
-##
-## Delay check for other sessions until after $webscript checks.
-##
-## For HOST mode log error if we cannot create $hostlink.
-##
-## Loopback interface added to default value for $FWBRIDGE (FWBRIDGE="br+ lo")
-## to allow access from router to status function in new versions of pixelserv.
-##
-## Truncate $CONF (dnsmasq.custom) instead of deleting the file
-## when stopping adblock or using host mode. Baby step for non-tomato platforms.
-## Should allow users to add a dnsmasq-conf directive to dnsmasq.conf pointing to
-## $CONF. If specified as a conf-file directive, a missing $CONF  will cause
-## dnsmasq to hang in a loop during startup.  Leaving a truncated $CONF
-## will allow dnsmasq to start. Adblock still assumes it has complete control
-## of $CONF, any manual changes to $CONF would be overwritten by adblock.
-##
-##
-## Add record count footer to blocklist file
-##
-## Allow logging to be enabled in $CONF. Setting dnsmasq_logqueries=1 will add
-## the "log-queries" directive to $CONF.
-##
-## 2014-10-26
-## ----------
-## Make sure we are looking for the right pixelserv instance.
-##
-## Truncate $blocklist instead of deleting for the same reasons as $CONF.
-##
-## Don't assume last octet of broadcast address is 255.
-##
-## Add $dnsmasq_custom variable to config file:
-## !**** CAUTION ****!
-##   use at your own risk
-##
-##   value will be appended to $CONF as entered
-##
-##   example:
-##   dnsmasq_custom='
-##   log-facility=/tmp/mylogfile
-##   log-dhcp
-##   log-queries
-##   local-ttl=600
-##   '
-##
-##   WARNING: dnsmasq is very sensitive and WILL NOT START with invalid
-##   entries, entries that conflict with directives in the primary
-##   config, and some duplicated entries
-##
-##   no validation of the content is performed by adblock
-##
-##   !! do not use unless you know what you are doing !!
-## !**** CAUTION ****!
-##
-## Web interface now includes black/white list and config editor and
-## ability to add to black/white list from report listings
+## See adblock.readme for release notes
 ##
 
 #########################################################
@@ -310,7 +25,7 @@ alias df='/bin/df'
 
 pidfile=/var/run/adblock.pid
 
-release="2014-10-26"
+release="20150401"
 
 # buffer for log messages in cgi envionment
 msgqueue=""
@@ -442,6 +157,12 @@ weblink=/www/user/adblock.sh
 # script for web interface
 webscript=adblockweb.sh
 
+# Add Adblock link to Tomato GUI !!!EXPERIMENTAL!!!
+tomatolink=0
+
+# don't output log for cgi wrapper
+quietcgi=1
+
 # path to dnsmasq.conf
 dnsmasq_config="/etc/dnsmasq.conf"
 
@@ -452,7 +173,7 @@ dnsmasq_config="/etc/dnsmasq.conf"
 dnsmasq_logqueries=""
 
 # !**** CAUTION ****!
-# dnsmasq_ custom - use at your own risk
+# dnsmasq_custom - use at your own risk
 #
 # value will be appended to $CONF as entered
 #
@@ -474,6 +195,9 @@ dnsmasq_logqueries=""
 #
 # !**** CAUTION ****!
 dnsmasq_custom=""
+
+# additional options for wget
+wget_opts=""
 
 # list mode
 LISTMODE="OPTIMIZE"
@@ -511,19 +235,16 @@ WHITELIST=""
 #########################################################
 
 elog() {
-#echo $1
-#return
-
-	logger -t "ADBLOCK[$$]" "$@"
-#return
 	[ "$cgi" = "1" ] && {
-		msgqueue=$msgqueue"ADBLOCK[$$}: $@\n"
-	} || echo "ADBLOCK[$$]: $@" >&2
+		msgqueue=$msgqueue"$@\n"
+	} || logger -st "ADBLOCK[$$]" "$@"
 }
 
 pexit() {
-	[ "$msgqueue" != "" ] && echo -ne $msgqueue >&2
 	cgi=0
+	[ "$msgqueue" != "" ] && {
+		echo -ne "$msgqueue" | ( while read line; do elog "$line"; done )
+	}
 	elog "Exiting $me $@"
 	rm -f "$pidfile" &>/dev/null
 	logvars2
@@ -628,7 +349,18 @@ rmfiles() {
 	rm -f "$shut" &>/dev/null
 	rm -f "$hostlink" &>/dev/null
 	rm -f "$tmpstatus" &>/dev/null
-	echo -n > "$CONF"
+	CONFchanged=0
+	if [ -e "$CONF" ]; then
+		local CONFmd51=$(md5sum "$CONF" 2>/dev/null)
+		echo -n > "$CONF"
+		local CONFmd52=$(md5sum "$CONF" 2>/dev/null)
+		if [ "$CONFmd51" = "$CONFmd52" ]; then
+			elog "CONF file $CONF unchanged"
+		else
+			CONFchanged=1
+			elog "CONF file $CONF truncated"
+		fi
+	fi
 }
 
 stop() {
@@ -641,13 +373,7 @@ stop() {
 }
 
 restartdns() {
-	# enable logging if needed
-	[ "$dnsmasq_logqueries" = "1" ] && echo "log-queries" >> $CONF
-
-	# add custom dnsmasq settings
-	[ "$dnsmasq_custom" != "" ] && echo "$dnsmasq_custom" >> $CONF
-
-	[ $LISTMODE = "HOST" ] &&  [ "$logging" = "$dnsmasq_logqueries" ] && [ "$dnsmasq_custom" = "" ] && {
+	[ $LISTMODE = "HOST" ] &&  [ "$logging" = "$dnsmasq_logqueries" ] && [ "$CONFchanged" != "1" ] && {
 		[ $currentmode = "HOST" -o $currentmode = "OFF" ] && {
 			elog "Loading hosts file for dnsmasq"
 			kill -HUP $( pidof dnsmasq )
@@ -659,7 +385,12 @@ restartdns() {
 }
 
 writeconf() {
+
+	[ ! -e "$CONF" ] &&  echo -n > "$CONF"
+
+	local CONFmd51=$(md5sum "$CONF" 2>/dev/null)
 	echo -n > "$CONF"
+
 	if [ ! -f $blocklist  -o ! -s $blocklist ]; then
 		elog "Blocklist Missing or empty - REMOVING DNSMASQ FILES / ADBLOCK MAY BE DISABLED!"
 		rm -f "$hostlink" &>/dev/null
@@ -676,7 +407,22 @@ writeconf() {
 	else
 		elog "Writing File $CONF"
 		rm -f "$hostlink" &>/dev/null
-		echo "conf-file=$blocklist" > "$CONF"
+		echo "conf-file=$blocklist" >> "$CONF"
+	fi
+
+	# enable logging if needed
+	[ "$dnsmasq_logqueries" = "1" ] && echo "log-queries" >> "$CONF"
+
+	# add custom dnsmasq settings
+	[ "$dnsmasq_custom" != "" ] && echo "$dnsmasq_custom" >> "$CONF"
+
+	local CONFmd52=$(md5sum "$CONF" 2>/dev/null)
+	if [ "$CONFmd51" = "$CONFmd52" ]; then
+		CONFchanged=0
+		elog "CONF file $CONF unchanged"
+	else
+		CONFchanged=1
+		elog "CONF file $CONF changed"
 	fi
 }
 
@@ -690,6 +436,7 @@ cleanfiles() {
 	rm -f $blocklist  &> /dev/null
 	rm -f $weblink  &> /dev/null
 	rm -f $weblink.weblink  &> /dev/null
+	rmtomatolink
 	elog "The following files remain for manual removal:"
 	ls -1Ad $me $config $listprefix/* $prefix/* 2>/dev/null| sort -u | ( while read line; do elog "    $line"; done )
 }
@@ -699,13 +446,6 @@ shutdown() {
 	stopserver
 }
 
-#########################################################
-# - firewall rules moved to separate proc to allow	#
-#   autorun link					#
-# - these rules assume ssl aware pixelserv v32 or later	#
-# - use reject to close connections more quickly	#
-# - support vlan configs (preliminary)			#
-#########################################################
 fire() {
 	cleanfire
 
@@ -753,6 +493,41 @@ fire() {
 	[ "$FWRULES" = "STRICT" ] &&  iptables -A $chain -j $drop
 }
 
+rmtomatolink() {
+	if grep -q "/www/tomato.js" /proc/mounts ; then
+		if [ -f "$jsflag" ]; then
+			umount /www/tomato.js
+		else
+			elog "tomatos.js was mounted by something else"
+			mountjs=0
+		fi
+	fi
+	rm -f "$jsfile"
+	rm -f "$jsflag"
+}
+
+addtomatolink() {
+	if [ "$tomatolink" = "1" ]; then
+		mountjs=1
+		if [ "$web_dir" != "" ] && [ "$web_dir" != "default" ]; then
+			elog "Skip adding tomato link, non default web_dir($web_dir)"
+			mountjs=0
+		elif ! grep -q "'log.asp'] ] ],$" /www/tomato.js ; then
+			elog "Skip adding tomato link, could not find insertion point in tomato.js"
+			mountjs=0
+		fi
+		rmtomatolink
+		if [ "$mountjs" = "1" ]; then
+			elog "Adding tomato menu item"
+			sed "/'log.asp'] ] ],$/ a  ['Adblock', '${weblink#*/www/}\" target=\"adblock\"']," /www/tomato.js > "$jsfile"
+			mount -o bind  "$jsfile" /www/tomato.js
+			touch "$jsflag"
+		fi
+	else
+		rmtomatolink
+	fi
+}
+
 cleanfire() {
 	iptables -D INPUT "0$( iptables --line-numbers -vnL INPUT | grep -Fm1 "$chain" | cut -f 1 -d " ")" &>/dev/null
 	iptables -F $chain &>/dev/null
@@ -787,7 +562,8 @@ grabsource() {
 	}
 
 	(
-		if wget $1 -O -; then
+		#if wget "$wget_opts" $1 -O -; then
+		if wget  $1 -O - $wget_opts ; then
 			echo 0 >>"$tmpstatus"
 		else
 			elog "Failed: $1"
@@ -832,12 +608,6 @@ buildlist() {
 	done < "$tmpstatus"
 	rm "$tmpstatus"
 
-	#########################################################
-	# build list of source files to load			#
-	#							#
-	# previously entire $listprefix folder was processed 	#
-	# which could contain orphaned and unwanted files	#
-	#########################################################
 	sourcelist=$(cat "$sourcelistfile")
 	rm -f "$sourcelistfile" &>/dev/null
 
@@ -864,8 +634,8 @@ buildlist() {
 			elog "Mode unchanged"
 			# no changes to list and already running in current mode
 			writeconf # re-write conf or link if needed
-			# if logging matches config, nothing else to do, so exit
-			[ "$logging" = "$dnsmasq_logqueries" ] && pexit 2
+			# if no dnsmasq_custom changes, nothing else to do, so exit
+			[ "$CONFchanged" = "0" ] && pexit 2
 		fi
 	else
 		elog "Download failed"
@@ -1093,6 +863,10 @@ loadconfig() {
 		fi
 	fi
 
+	jsfile="$(dirname $weblink)/tomato.js.adblock"
+	jsflag="$jsfile.mount"
+	web_dir="$(nvram get web_dir)"
+
 	currentmode=OFF
 	nslookup $testhost &>/dev/null  && currentmode=UNKNOWN
 	nslookup host.$modehost &>/dev/null && currentmode=HOST
@@ -1115,6 +889,17 @@ elog "Running as $me $@"
 
 loadconfig
 
+if [ -L $me -a "$cgi" = "1" -a -e $me.weblink ]; then
+ 	if [ "$me" != "$(cat "$me.weblink")" ]; then
+		# apparently called as cgi wrapper, but name doesn't match
+    		elog "<br>"
+		elog "weblink file exists in script folder but running script name does not match <br>"
+		elog "script name: $me, weblink value: $(cat $me.weblink) <br>"
+		pexit 20
+	fi
+fi
+
+
 # if called via weblink, execute $webscript
 if [ "$me" = "$weblink" ]; then
 	for e in $(set | grep "^web.*=")
@@ -1134,10 +919,12 @@ if [ "$me" = "$weblink" ]; then
 	export pixelbin
 	export prefix
 	export redirip
+	export release
 	export testhost
 	export weblink
 	export webscript
 	export whitelist
+	export FWBRIDGE
 	export PIXEL_IP
 	export LISTMODE
 	if [ -x "$binprefix/$webscript" ]; then
@@ -1151,16 +938,18 @@ if [ "$me" = "$weblink" ]; then
 		elog "ERROR: Web Script $webscript not found or not executable!"
 		pexit 0  &> /dev/null
 	fi
-	elog Executing $webscript QUERY_STRING=$QUERY_STRING
+	elog Executing $webscript QUERY_STRING="$QUERY_STRING"
 	"$webscript" < /proc/$$/fd/0 &
-	pexit 0 &> /dev/null
+	[ "$quietcgi" = "1" ] && exit 0 || pexit 0 &> /dev/null
 fi
 
 # display queue and disable cgi mode
 [ "$msgqueue" != "" ] && {
-	echo -en $msgqueue >&2
-	msgqueue=""
  	cgi=0
+	[ "$msgqueue" != "" ] && {
+		echo -ne "$msgqueue" | ( while read line; do elog "$line"; done )
+	}
+	msgqueue=""
 }
 
 # exit if another instance is running
@@ -1189,7 +978,8 @@ fi
 if [ "$weblink" != "" ] &&  [ -x "$binprefix/$webscript" -o -x "$( which "$webscript" )" ]; then
 	if ln -sf "$me" "$weblink" ; then
 		elog "Creating web link $weblink"
-		touch $weblink.weblink
+		echo "$weblink" >  $weblink.weblink
+		addtomatolink
 	else
 		elog "ERROR - could not create web link $weblink"
 	fi
@@ -1294,3 +1084,5 @@ restartdns
 echo "$thisconfig" > "$prefix/lastmod-config"
 
 pexit 0
+
+#
