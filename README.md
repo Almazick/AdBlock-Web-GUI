@@ -3,7 +3,7 @@ AdBlock Web GUI by Almaz
 
 AdBlock Web Gui for Jerrm script
 
-Version: 1.6
+Version: 1.7
 
 Using Tomato firmware just put all the files in /tmp/adblock and chmod +x *.sh; chmod +x pixelserv
 

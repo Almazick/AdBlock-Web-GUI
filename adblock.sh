@@ -22,12 +22,13 @@ alias iptables='/usr/sbin/iptables'
 alias nslookup='/usr/bin/nslookup'
 alias ls='/bin/ls'
 alias df='/bin/df'
+alias ifconfig='/sbin/ifconfig'
 
 pidfile=/var/run/adblock.pid
 
-release="20150401"
+release="2015-11-11"
 
-# buffer for log messages in cgi envionment
+# buffer for log messages in cgimode or firemode
 msgqueue=""
 
 # router memory
@@ -37,16 +38,18 @@ ram=$(awk '/^MemTotal/ {print int($2/1024)}' < /proc/meminfo)
 me="$(cd $(dirname "$0") && pwd)/${0##*/}"
 
 # Is this run as CGI?
-[ -n "$REQUEST_METHOD" ] && cgi=1
+[ -n "$REQUEST_METHOD" ] && cgimode=1
+
+[ "${me##*"."}" = "fire" ] && firemode=1
 
 # path to script -  was script called via an autorun link?
-if [ ${me##*"."} = "fire" -o  ${me##*"."} = "wanup" -o  ${me##*"."} = "shut" ]; then
+if [ "${me##*"."}" = "fire" -o "${me##*"."}" = "wanup" -o  "${me##*"."}" = "shut" ]; then
 	# yes - find true script folder
  	s="$( ls -l "$me" )"; s="${s##*" -> "}"
 	binprefix="$(cd "$(dirname "$me")" && cd "$(dirname "$s")" && pwd)"
 	adblockscript="$binprefix/${s##*"/"}"
 	islink=1
-elif [ -L $me -a "$cgi" = "1" -a -e $me.weblink ]; then
+elif [ -L $me -a "$cgimode" = "1" -a -e $me.weblink ]; then
 	# called via a link, we are in cgi environment, and weblink file exists
 	# so follow the link for binprefix location
 	s="$( ls -l "$me" )"; s="${s##*" -> "}"
@@ -78,6 +81,9 @@ configlist="$binprefix/$ini
   /opt/$configname/$ini
   /opt/etc/$ini
   /opt/$ini
+  /mmc/$configname/$ini
+  /mmc/etc/$ini
+  /mmc/$ini
   /cifs1/$configname/$ini
   /cifs1/etc/$ini
   /cifs1/$ini
@@ -157,11 +163,14 @@ weblink=/www/user/adblock.sh
 # script for web interface
 webscript=adblockweb.sh
 
-# Add Adblock link to Tomato GUI !!!EXPERIMENTAL!!!
-tomatolink=0
+# Add Adblock link to Tomato GUI
+tomatolink=1
 
-# don't output log for cgi wrapper
+# don't output log for cgi wrapper mode
 quietcgi=1
+
+# don't output log for firewall mode
+quietfire=1
 
 # path to dnsmasq.conf
 dnsmasq_config="/etc/dnsmasq.conf"
@@ -216,6 +225,9 @@ FWBRIDGE="br+ lo"
 # 0: disable pixelserv, 1-254: last octet of IP to run pixelserv on
 PIXEL_IP=254
 
+# let system determin pixelserv ip based on PIXEL_IP and existing
+redirip=""
+
 # additional options for pixelserv
 PIXEL_OPTS=""
 
@@ -235,62 +247,94 @@ WHITELIST=""
 #########################################################
 
 elog() {
-	[ "$cgi" = "1" ] && {
-		msgqueue=$msgqueue"$@\n"
-	} || logger -st "ADBLOCK[$$]" "$@"
+ local tag="ADBLOCK[$$]"
+ local myline
+ local pad="                    "
+ local len=${2:-"0"}
+ pad=${pad:0:$len}
+
+ local p1=${1:-"-"}
+
+ [ "$cgimode" = "1" -o "$firemode" = "1" ] && {
+   [ "$p1" = "-" ] &&  {
+     [ -t 0 ] || while read myline; do msgqueue="$msgqueue""$pad$myline\n" ; done
+   } || msgqueue="$msgqueue""$pad$p1\n"
+ } || {
+   [ "$p1" = "-" ] && {
+     [ -t 0 ] || while read myline; do logger -st "$tag" "$pad$myline"; done
+   } || logger -st "$tag" "$pad$p1"
+ }
+}
+
+flushlog() {
+# display queue and disable cgi/fire modes
+ [ "$msgqueue" != "" ] && {
+	cgimode=0
+	firemode=0
+	[ "$msgqueue" != "" ] && echo -ne "$msgqueue" | elog
+	msgqueue=""
+ }
 }
 
 pexit() {
-	cgi=0
-	[ "$msgqueue" != "" ] && {
-		echo -ne "$msgqueue" | ( while read line; do elog "$line"; done )
-	}
+	flushlog
 	elog "Exiting $me $@"
 	rm -f "$pidfile" &>/dev/null
 	logvars2
 	exit $@
 }
 
-dlog() {
-	[ "$debug" = "1" ] && elog "$@"
+logfw() {
+	elog "iptables"
+	{ echo -e "filter\n========================================================================"
+	  iptables -vnL
+	  echo -e "\nnat\n========================================================================"
+	  iptables -vnL -t nat
+	  echo -e "\nmangle\n========================================================================"
+          iptables -vnL -t mangle
+	} | elog - 4
 }
 
 logvars() {
 	[ "$debug" != "1" ] && return
 	elog "Running on $( nvram get os_version )"
+	elog "PID  $(ps -w | grep $$ | grep -v grep) SHLVL $SHLVL"
+	elog "PPID $(ps -w | grep $PPID | grep -v grep)"
 	elog "Initialized Environment:"
-	set | ( while read line; do elog "    $line"; done )
+	set | elog - 4
 	elog "Mounted Drives"
-	mount | ( while read line; do elog "    $line"; done )
+	mount | elog - 4
 	elog "Free Space"
-	df -h | ( while read line; do elog "    $line"; done )
+	df -h | elog - 4
 	elog "prefix folder - $prefix"
-	ls -lh $prefix | ( while read line; do elog "    $line"; done )
+	ls -lh $prefix | elog - 4
 	elog "listprefix folder - $listprefix"
-	ls -lh $listprefix | ( while read line; do elog "    $line"; done )
+	ls -lh $listprefix | elog - 4
 	elog "listtmp folder - $listtmp"
-	ls -lh $listtmp | ( while read line; do elog "    $line"; done )
+	ls -lh $listtmp | elog - 4
 	elog "config file contents - $config"
-	cat $config | ( while read line; do elog "    $line"; done )
+	cat $config | elog - 4
+	logfw
 }
 
 logvars2() {
 	[ "$debug" != "1" ] && return
 	elog "Environment at exit:"
 	elog "Free Space"
-	df -h | ( while read line; do elog "    $line"; done )
+	df -h | elog - 4
 	elog "prefix folder - $prefix"
-	ls -lh $prefix | ( while read line; do elog "    $line"; done )
+	ls -lh $prefix | elog - 4
 	elog "listprefix folder - $listprefix"
-	ls -lh $listprefix | ( while read line; do elog "    $line"; done )
+	ls -lh $listprefix | elog - 4
 	elog "listtmp folder - $listtmp"
-	ls -lh $listtmp | ( while read line; do elog "    $line"; done )
+	ls -lh $listtmp | elog - 4
 	elog "blocklist contents - $blocklist"
-	head $blocklist | ( while read line; do elog "    $line"; done )
+	head $blocklist | elog - 4
 	elog "    ..."
-	tail -n2 $blocklist | ( while read line; do elog "    $line"; done )
+	tail -n2 $blocklist | elog - 4
 	elog "CONF contents - $CONF"
-	cat $CONF | ( while read line; do elog "    $line"; done )
+	cat $CONF | elog - 4
+	logfw
 }
 
 readdnsmasq() {
@@ -316,14 +360,14 @@ readdnsmasq() {
 startserver() {
 	if [ "$PIXEL_IP" != "0" ]; then
 		if ! ifconfig | grep -q $BRIDGE:$vif; then
-			elog "Setting up $redirip on $BRIDGE:$vif"
-			ifconfig $BRIDGE:$vif $redirip up
+			elog "Setting up $rediripandmask on $BRIDGE:$vif"
+			ifconfig $BRIDGE:$vif $rediripandmask up
 		fi
-	if ps | grep -v grep | grep -q "${pixelbin##*"/"} $redirip"; then
+		if ps -w | grep -v grep | grep -q "${pixelbin##*"/"} $redirip"; then
 			elog "pixelserv already running, skipping"
 		else
 			elog "Setting up pixelserv on $redirip"
-			"$pixelbin" $redirip $PIXEL_OPTS
+			"$pixelbin" $redirip $PIXEL_OPTS 2>&1 | elog
 		fi
 		# create autorun links
 		[ -d /etc/config ] || mkdir /etc/config
@@ -339,16 +383,17 @@ startserver() {
 }
 
 stopserver() {
-	killall pixelserv &>/dev/null
-	ifconfig $BRIDGE:$vif down &>/dev/null
-}
-
+	killall pixelserv
+	ifconfig $BRIDGE:$vif down
+} &> /dev/null
 
 rmfiles() {
-	rm -f "$fire" &>/dev/null
-	rm -f "$shut" &>/dev/null
-	rm -f "$hostlink" &>/dev/null
-	rm -f "$tmpstatus" &>/dev/null
+	{
+		rm -f "$fire"
+		rm -f "$shut"
+		rm -f "$hostlink"
+		rm -f "$tmpstatus"
+	} &>/dev/null
 	CONFchanged=0
 	if [ -e "$CONF" ]; then
 		local CONFmd51=$(md5sum "$CONF" 2>/dev/null)
@@ -381,7 +426,7 @@ restartdns() {
 		}
 	}
 	elog "Restarting dnsmasq"
-	service dnsmasq restart
+	service dnsmasq restart | elog
 }
 
 writeconf() {
@@ -438,7 +483,7 @@ cleanfiles() {
 	rm -f $weblink.weblink  &> /dev/null
 	rmtomatolink
 	elog "The following files remain for manual removal:"
-	ls -1Ad $me $config $listprefix/* $prefix/* 2>/dev/null| sort -u | ( while read line; do elog "    $line"; done )
+	ls -1Ad $me $config $listprefix/* $prefix/* 2>/dev/null| sort -u | elog - 4
 }
 
 shutdown() {
@@ -471,6 +516,8 @@ fire() {
 	[ "$vpnline" != "" ] && [ "$vpnline" -lt "$stateline" ] && inputline="" || inputline=$(( stateline + 1 ))
 	iptables -N $chain
 	iptables -I INPUT $inputline -d $redirip -j $chain
+	iptables -A $chain -m state --state INVALID -j DROP
+	iptables -A $chain -m state --state RELATED,ESTABLISHED -j ACCEPT
 	for i in $FWBRIDGE; do
 		netstat -ltn | grep -q "$redirip:443" && {
 			# we are listening for ssl, so let both 80 and 443 through
@@ -561,15 +608,16 @@ grabsource() {
 		rm -f "$sourcefile" &>/dev/null
 	}
 
-	(
-		#if wget "$wget_opts" $1 -O -; then
+	elog "Downloading: $1"
+	{
 		if wget  $1 -O - $wget_opts ; then
+			elog "Completed: $1"
 			echo 0 >>"$tmpstatus"
 		else
 			elog "Failed: $1"
 			echo 1 >>"$tmpstatus"
 		fi
-	) | tr -d "\r" | sed -e '/^[[:alnum:]:]/!d' | awk '{print $2}' | sed -e '/^localhost$/d' > "$sourcefile.$$.tmp"
+	} | tr -d "\r" | sed -e '/^[[:alnum:]:]/!d' | awk '{print $2}' | sed -e '/^localhost$/d' > "$sourcefile.$$.tmp"
 
 	if [ -s "$sourcefile.$$.tmp" ]  ; then
 		[ -n "$lastmod" ] && echo "$lastmod" > "$lmfile"
@@ -654,66 +702,73 @@ confgen() {
 
   	trap 'elog "Signal received, cancelling"; rm -f "$tmpwhitelist" "$tmpblocklist"  &>/dev/null; echo -n "" > "$blocklist"; pexit 140' SIGQUIT SIGINT SIGTERM SIGHUP
 
-	# only allow valid hostname characters
-	echo "[^a-zA-Z0-9._-]+"  > "$tmpwhitelist"
+	{
+		# only allow valid hostname characters
+		echo "[^a-zA-Z0-9._-]+"
 
-	(
 		if [ -f "$whitelist" ]; then
-			# strip blank lines, spaces and carriage returns from whitelist
-			cat "$whitelist" | sed 's/[ |\t|\r]*//g; /^$/d'
+			# strip comments, blank lines, spaces and carriage returns from whitelist
+			sed -e 's/#.*$//g;s/^[ |\t|\r]*//;/^$/d' "$whitelist" 2>/dev/null
 		fi
 
 		# add config file whitelist entries to temp file
 		for w in $WHITELIST; do
 			echo $w
 		done
-	)  >> "$tmpwhitelist"
 
-	[ -f "$blacklist" ] && {
-		# strip blank lines, spaces and carriage returns from blacklist
-		cat "$blacklist" | sed 's/[ |\t|\r]*//g; /^$/d' > "$tmpblocklist"
-	}
-	for b in $BLACKLIST; do
-		echo "$b" >> "$tmpblocklist"
-	done
+	}  > "$tmpwhitelist"
 
-	# add hosts to test if adblock is loaded
-	echo $testhost >> "$tmpblocklist"
+	{
+		# use sourcefiles list (and not all files in folder which could have old/unwanted files)
+		[ -n "$sourcelist" ] && cat $sourcelist | grep -Ev -f "$tmpwhitelist"
 
-	echo $LISTMODE.$modehost >> "$tmpblocklist"
+		rm -f "$tmpwhitelist" &>/dev/null
 
-	# use sourcefiles list (and not all files in folder which could have old/unwanted files)
-	[ -n "$sourcelist" ] && cat $sourcelist | grep -Ev -f "$tmpwhitelist" >> "$tmpblocklist"
+		[ -f "$blacklist" ] && {
+			# strip comments, blank lines, spaces and carriage returns from blacklist
+			sed -e 's/#.*$//g;s/^[ |\t|\r]*//;/^$/d' "$blacklist" 2>/dev/null
+		}
+		for b in $BLACKLIST; do
+			echo "$b"
+		done
 
-	rm -f "$tmpwhitelist" &>/dev/null
+		# add hosts to test if adblock is loaded
+		echo $testhost
 
-	# add header to blocklist, used to determine what mode the list was built for
-	# do not alter format without adjusting the grep regex that tests the mode/ip
-	echo "# adblock blocklist, MODE=$LISTMODE, IP=$redirip, generated $(date)" > $blocklist
+		echo $LISTMODE.$modehost
 
-	case $LISTMODE in
-		HOST)
-			sort -u  "$tmpblocklist" |
-			sed -e "s:^:$redirip :" >> "$blocklist"
-		;;
-		OPTIMIZE)
-			sed -e :a -e 's/\([^\.]*\)\.\([^\.]*\)/\2#\1/;ta'  "$tmpblocklist" | sort |
-  			awk -F '#' 'BEGIN{d = "%"} { if(index($0"#",d)!=1&&NF!=0){d=$0"#";print $0;} }' |
-			sed -e :a -e 's/\([^#]*\)#\([^#]*\)/\2\.\1/;ta' -e "s/\(.*\)/address=\/\1\/$redirip/" >> "$blocklist"
-		;;
-		LEGACY)
-			sort -u  "$tmpblocklist" |
-			sed  -e '/^$/d'  -e  "s/\(.*\)/address=\/\1\/$redirip/" >> "$blocklist"
-		;;
-	esac
-	hostcount=$(( $(wc -l < "$blocklist") - 1 ))
-	echo "# $hostcount records" >> "$blocklist"
-	rm -f "$tmpblocklist" &>/dev/null
+	}  > "$tmpblocklist"
+
+	{
+		# add header to blocklist, used to determine what mode the list was built for
+		# do not alter format without adjusting the grep regex that tests the mode/ip
+		echo "# adblock blocklist, MODE=$LISTMODE, IP=$redirip, generated $(date)"
+
+		case $LISTMODE in
+			HOST)
+				sort -u  "$tmpblocklist" |
+				sed -e "s:^:$redirip :"
+			;;
+			OPTIMIZE)
+				sed -e :a -e 's/\([^\.]*\)\.\([^\.]*\)/\2#\1/;ta'  "$tmpblocklist" | sort |
+  				awk -F '#' 'BEGIN{d = "%"} { if(index($0"#",d)!=1&&NF!=0){d=$0"#";print $0;} }' |
+				sed -e :a -e 's/\([^#]*\)#\([^#]*\)/\2\.\1/;ta' -e "s/\(.*\)/address=\/\1\/$redirip/"
+			;;
+			LEGACY)
+				sort -u  "$tmpblocklist" |
+				sed  -e '/^$/d'  -e  "s/\(.*\)/address=\/\1\/$redirip/"
+			;;
+		esac
+		hostcount=$(( $(wc -l < "$blocklist") - 1 ))
+		echo "# $hostcount records"
+
+ 		rm -f "$tmpblocklist" &>/dev/null
+		elog "Blocklist generated - $(( $(date +%s) - cg1 )) seconds"
+		elog "$hostcount unique hosts to block"
+	}  > "$blocklist"
 
   	trap -  SIGQUIT SIGINT SIGTERM SIGHUP
 
-	elog "Blocklist generated - $(( $(date +%s) - cg1 )) seconds"
-	elog "$hostcount unique hosts to block"
 }
 
 loadconfig() {
@@ -783,6 +838,19 @@ loadconfig() {
 	#ensure tthe correct path
 	cd "$prefix" &>/dev/null
 
+	if [ "$PIXEL_IP" = "0" ]; then
+		[ "$redirip" = "" ] && redirip="0.0.0.0"
+	else
+		[ "$redirip" = "" ] || {
+			elog "PIXEL_IP should be \"0\" if redirip is set in config!"
+			pexit 10
+		}
+		[ -x "$pixelbin" ] || {
+			elog "$pixelbin not found/executable!"
+			pexit 10
+		}
+	fi
+
 	#########################################################
 	# redirip can be explicitly set in the config file,	#
 	# but make sure it is valid as no checks are done	#
@@ -790,7 +858,10 @@ loadconfig() {
 	# PIXEL_IP still needs to be set to non-zero for 	#
 	# pixelserv to be started				#
 	#########################################################
-	[ "$redirip" = "" ] && redirip=$(ifconfig $BRIDGE | awk '/inet addr/{print $3}' | awk -F":" '{print $2}' | sed -e "s/[0-9]*$/$PIXEL_IP/")
+	[ "$redirip" = "" ] && {
+		rediripandmask=$(ifconfig $BRIDGE | awk -F ' +|:' '/inet addr/{sub(/[0-9]*$/,'$PIXEL_IP',$4); print $4" netmask "$8}')
+		redirip=${rediripandmask%% *}
+	}
 
 	# $FWRULES must be NONE, LOOSE, or STRICT, if value is unknown, default to STRICT
 	FWRULES=$(echo $FWRULES | tr "[a-z]" "[A-Z]")
@@ -818,15 +889,6 @@ loadconfig() {
 		elog "Blocklist folder ($listprefix) does not exist and cannot be created"
 		pexit 12
 	}
-
-	if [ "$PIXEL_IP" = "0" ]; then
-		redirip="0.0.0.0"
-	else
-		[ -x "$pixelbin" ] || {
-			elog "$pixelbin not found/executable!"
-			pexit 10
-		}
-	fi
 
 	freedisk=$(df "$prefix" | awk '!/Filesys/{print int($4/1024)}')
 	freetmp=$(df "$tmp" | awk '!/Filesys/{print int($4/1024)}')
@@ -857,7 +919,11 @@ loadconfig() {
 	dnslogfile="$(readdnsmasq "$dnsmasq_config" "log-facility")"
 	if [ "$dnsmasq_logqueries" = "1" -o "$logging" = "1" ]; then
 		if [ "$dnslogfile" = "" ]; then
-			elog "Logging to syslog"
+			if [ "$(nvram get log_file)" = 1 ]; then
+				elog "Logging to syslog"
+			else
+				elog "Warning: dnsmasq logging to syslog, but syslog is disabled"
+			fi
 		else
 			elog "Logging to $dnslogfile"
 		fi
@@ -880,7 +946,7 @@ loadconfig() {
 	thisconfig="$config:$(date -r "$config" 2>/dev/null)"
 	thisconfig="$thisconfig|$whitelist:$(date -r "$whitelist" 2>/dev/null)"
 	thisconfig="$thisconfig|$blacklist:$(date -r "$blacklist" 2>/dev/null)"
-	thisconfig="$thisconfig|$me:$(date -r "$me" 2>/dev/null)"
+	thisconfig="$thisconfig|$adblockscript:$(date -r "$adblockscript" 2>/dev/null)"
 	lastconfig="$(cat "$prefix/lastmod-config" 2>/dev/null)"
 }
 
@@ -889,7 +955,7 @@ elog "Running as $me $@"
 
 loadconfig
 
-if [ -L $me -a "$cgi" = "1" -a -e $me.weblink ]; then
+if [ -L $me -a "$cgimode" = "1" -a -e $me.weblink ]; then
  	if [ "$me" != "$(cat "$me.weblink")" ]; then
 		# apparently called as cgi wrapper, but name doesn't match
     		elog "<br>"
@@ -927,6 +993,8 @@ if [ "$me" = "$weblink" ]; then
 	export FWBRIDGE
 	export PIXEL_IP
 	export LISTMODE
+	export thisconfig
+	export lastconfig
 	if [ -x "$binprefix/$webscript" ]; then
 		# use the script in this folder if it exists
 		export webscript="$binprefix/$webscript"
@@ -938,38 +1006,35 @@ if [ "$me" = "$weblink" ]; then
 		elog "ERROR: Web Script $webscript not found or not executable!"
 		pexit 0  &> /dev/null
 	fi
-	elog Executing $webscript QUERY_STRING="$QUERY_STRING"
-	"$webscript" < /proc/$$/fd/0 &
+	elog "Executing $webscript QUERY_STRING="$QUERY_STRING""
+	"$webscript"
 	[ "$quietcgi" = "1" ] && exit 0 || pexit 0 &> /dev/null
 fi
 
 # display queue and disable cgi mode
-[ "$msgqueue" != "" ] && {
- 	cgi=0
-	[ "$msgqueue" != "" ] && {
-		echo -ne "$msgqueue" | ( while read line; do elog "$line"; done )
-	}
-	msgqueue=""
-}
+[ "$cgimode" = "1" ] && flushlog
 
 # exit if another instance is running
 kill -0 $(cat $pidfile 2>/dev/null) &>/dev/null && {
-	elog "Another instance found ($pidfile), exiting!"
+	flushlog
+	elog "Another instance found ($pidfile - $(cat "$pidfile")), exiting!"
 	exit 1
 }
 
 echo $$ > $pidfile
 
 # called via .fire autorun link - reload firewall rules and exit
-if [ "$me" = "$fire" -o  "$me" = "$wanup" ]; then
-	elog Updating iptables
+if [ "$me" = "$fire" ]; then
+	elog "Updating iptables"
 	startserver
-	pexit 0
+	[ "$quietfire" = "1" ] && exit 0 || pexit 0 &> /dev/null
 fi
+
+flushlog
 
 # called via .shut autorun link - execute shutdown
 if [ "$me" = "$shut" ]; then
-	elog System shutdown
+	elog "System shutdown"
 	shutdown
 	pexit 0
 fi
@@ -977,7 +1042,10 @@ fi
 # write weblink
 if [ "$weblink" != "" ] &&  [ -x "$binprefix/$webscript" -o -x "$( which "$webscript" )" ]; then
 	if ln -sf "$me" "$weblink" ; then
+		local lanport=$(nvram get http_lanport)
+		[ "$lanport" = 80 -o "$lanport" = "" ] && lanport="" || lanport=":$lanport"
 		elog "Creating web link $weblink"
+		elog "Web interface should be available at http://$(nvram get lan_ipaddr)$lanport/user/${weblink##*/}"
 		echo "$weblink" >  $weblink.weblink
 		addtomatolink
 	else

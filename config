@@ -1,5 +1,7 @@
 
 ### Settings ###
+tomatolink=1
+dnsmasq_logqueries=1
 PIXEL_IP="254"    ## 0: disable pixelserv
         ## 1-254: last octet of IP to run pixelserv on (default=254)
 PIXEL_OPTS=""    ## additional options for pixelserv

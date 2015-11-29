@@ -39,6 +39,9 @@
 # $web_reportlines	how many lines of history to show in reports, default 100
 ##
 
+#webscript release
+webrelease="2015-11-11"
+
 # This script's name
 scriptname="${weblink##*"/"}"
 
@@ -164,6 +167,8 @@ cat << EOF
           msgElement.className = "success" ;
           document.getElementById(filename).defaultValue=document.getElementById(filename).value;
           setTimeout( function() {msgElement.className="clearmsg"}, msgTimeout )  ;
+          restartneeded = 1;
+          showRestart();
         } else {
           msgElement.title="ERROR \nState: " + xhr.readyState + "\nStatus: " + xhr.status + \
                            "\nStatus Text:" + xhr.statusText + "\nresponse:\n" + xhr.responseText;
@@ -187,7 +192,9 @@ cat << EOF
   function isDirty() {
     if (this.value != this.defaultValue) {
       document.getElementById("msg_" + this.id).innerHTML = "changes are not saved" ;
+      document.getElementById("btn_" + this.id).disabled = false ;
     } else {
+      document.getElementById("btn_" + this.id).disabled = true ;
       document.getElementById("msg_" + this.id).innerHTML = "" ;
     }
   }
@@ -213,6 +220,8 @@ cat << EOF
       if ( xhr.readyState==4 ) {
         if ( xhr.status==200 && xhr.responseText=="SUCCESS") {
             element.parentNode.className="savedline";
+            restartneeded = 1;
+            showRestart();
             var lines = element.parentNode.parentNode.querySelectorAll(".line");
             for ( var i = 0; i < lines.length; i++ ) {
                if ( lines[i].getAttribute("data-hostname")==element.parentNode.getAttribute("data-hostname") ) { lines[i].className = 'savedline' } ;
@@ -252,24 +261,43 @@ fi
 }
 
 blockedhosts() {
-  [ "$REFRESHTIME" != "1" ] && egrep -hB1 "$grepstr .* is $redirip" $dnsmasqlog | \
-    egrep 'query.* from ' | grep -v 'from 127.0.0.1' | tail -n $reportlines | sed 's|^\(.*:..:..\) .*: quer|\1 |' | sort -r | \
+  [ "$REFRESHTIME" != "1" -a "$logstatus" != "error" ] && egrep -hB1 "$grepstr .* is $redirip" $dnsmasqlog | \
+    egrep 'query.* from ' | grep -v 'from 127.0.0.1' | tail -n $reportlines 2>/dev/null | sed 's|^\(.*:..:..\) .* query\[A] |\1 |' | sort -r | \
     awk '{
-           srcip=$7;
+           srcip=$6;
            if ( hostnames[srcip] == ""  ) {
              cmd="nslookup "srcip" | awk \47END{print $4}\47";
              cmd | getline hostname;
              close (cmd);
              if ( hostname != "" ) hostnames[srcip] = hostname; else  hostnames[srcip] = srcip;
             }
-            printf("<span title=\"%s\" class=\"line\" data-hostname=\"%s\">%s %s %s %-15s %s <span class=\"add\" >[+w]</span></span>\n", hostnames[srcip],$5,$1,$2,$3,srcip,$5)
+            printf("<span title=\"%s\" class=\"line\" data-hostname=\"%s\">%s %s %s %-15s %s <span class=\"add\" >[+w]</span></span>\n", hostnames[srcip],$4,$1,$2,$3,srcip,$4)
          }'
 }
 
-resolvedhosts() {
-  [ "$REFRESHTIME" != "1" ] &&  grep  "reply .* is .*" $dnsmasqlog | grep -v "NODATA\|NXDOMAIN" | \
+oldresolvedhosts() {
+  [ "$REFRESHTIME" != "1" -a "$logstatus" != "error" ] &&  grep  "reply .* is .*" $dnsmasqlog | grep -v "NODATA\|NXDOMAIN" | \
      sort -r | sed 's/\(.*:[0-9][0-9]:[0-9][0-9]\).*reply \(.*\) is .*/\1 \2/p' | awk '!a[$4]++' | head -n $reportlines | \
      awk '{printf("<span class=\"line\" data-hostname=\"%s\">%s <span class=\"add\" >[+b]</span></span>\n", $4,$1" "$2" "$3" "$4)}'
+}
+
+resolvedhosts() {
+  [ "$web_oldresolvedhosts" = "1" ] && { oldresolvedhosts ; return; }
+  [ "$REFRESHTIME" != "1" -a "$logstatus" != "error" ] &&  egrep -hA1 "query\[A] .* from" $dnsmasqlog | sed "/^--$/d;N;s/\n/::::::/;/ from 127.0.0.1/d;/ is [$redirip|NXDOMAIN]/d" | \
+    sed 's/\(.*:[0-9][0-9]:[0-9][0-9]\).* query\[A] \(.*\) from \(.*\)::::::.*/\1 \2 \3/p' | \
+    sort -r | \
+    awk '!a[$4]++' | \
+    head -n $reportlines | \
+    awk '{
+           srcip=$5;
+           if ( hostnames[srcip] == ""  ) {
+             cmd="nslookup "srcip" | awk \47END{print $4}\47";
+             cmd | getline hostname;
+             close (cmd);
+             if ( hostname != "" ) hostnames[srcip] = hostname; else  hostnames[srcip] = srcip;
+            }
+            printf("<span title=\"%s\" class=\"line\" data-hostname=\"%s\">%s %s %s %-15s %s <span class=\"add\" >[+b]</span></span>\n", hostnames[srcip],$4,$1,$2,$3,srcip,$4)
+         }'
 }
 
 if [ "$REQUEST_METHOD" = "POST" ]; then
@@ -343,14 +371,18 @@ else
   iptstatus="down"
 fi
 
-if ps | grep -v grep | grep -q "${pixelbin##*"/"} .*$redirip"; then
+if ps -w | grep -v grep | grep -q "${pixelbin##*"/"} .*$redirip"; then
   pixstatus="up"
 else
   pixstatus="down"
 fi
 
 if [ "$logging" = "1" ] ; then
-  logstatus="<a href='$scriptname?dodnsmasqtoggle'>enabled</a>"
+  if [ "$facility" = "" -a "$(nvram get log_file)" = "0" ]; then
+    logstatus="error"
+  else
+    logstatus="<a href='$scriptname?dodnsmasqtoggle'>enabled</a>"
+  fi
 else
   logstatus="<a href='$scriptname?dodnsmasqtoggle'>DISABLED</a>"
 fi
@@ -371,18 +403,71 @@ statushtml="<span title='$blocklistcontents'>
   </span>
   <br>pixelserv: $pixstatus
   <br>logging: $logstatus
-  <br>hosts: $( tail -n1 $blocklist  | grep -oE "[0-9]*")
+  <br>hosts: $( tail -n1 $blocklist 2>/dev/null | grep -oE "[0-9]*")
   <br>ttl: $ttl
 "
+
+
+addstatdesc(){
+awk  '
+BEGIN {
+RS="<br>|</body>"
+ORS=""
+stat["uts"] = "uptime in seconds"
+stat["req"] = "connection requests"
+stat["avg"] = "average request size in bytes"
+stat["rmx"] = "maximum request size in bytes"
+stat["tav"] = "average request processing time in milliseconds"
+stat["tmx"] = "maximum request processing time in milliseconds"
+stat["err"] = "connections resulting in processing errors (syslog may have details)"
+stat["tmo"] = "connections that timed out while trying to read a request from the client"
+stat["cls"] = "connections that were closed by the client while reading or replying to the request"
+stat["nou"] = "requests that failed to include a URL"
+stat["pth"] = "requests for a path that could not be parsed"
+stat["nfe"] = "requests for a file with no extension"
+stat["ufe"] = "requests for an unrecognized/unhandled file extension"
+stat["gif"] = "requests for GIF images"
+stat["bad"] = "requests for unrecognized/unhandled HTTP methods"
+stat["txt"] = "requests for plaintext data formats"
+stat["jpg"] = "requests for JPEG images"
+stat["png"] = "requests for PNG images"
+stat["swf"] = "requests for Adobe Shockwave Flash files"
+stat["ico"] = "requests for ICO files (usually favicons)"
+stat["ssl"] = "SSL connection requests"
+stat["sta"] = "requests for HTML stats"
+stat["stt"] = "requests for plaintext stats"
+stat["204"] = "requests for /generate_204 URLs"
+stat["rdr"] = "requests resulting in a redirect"
+stat["pst"] = "requests for HTTP POST method"
+stat["hed"] = "requests for HTTP HEAD method"
+}
+
+/req,.*err/  {
+        for (i = 1; i <= NF; i++) {
+                s=$i
+                sub(",", "", s)
+                if ( s in stat )  { ;
+                        $(i-1) =  "<span title=\"" stat[s] "\" >" $(i-1) ;
+                        $i = $i"</span>" ;
+                }
+	}
+	$0="<br>"$0"</body>"
+}
+
+{ print }
+
+' #end of awk
+
+}
 
 pixstat() {
   if [ "$PIXEL_IP" = "0" ]; then
      echo $pixmsg
      exit
   fi
-  pixmsg=$(wget -q -t 1 -T 5 -O - "http://$redirip/servstats" 2>/dev/null || echo error)
+  pixmsg="$(wget -q -t 1 -T 5 -O - "http://$redirip/servstats" 2>/dev/null || echo error)"
   if [ "$pixmsg" != "" -a "$pixmsg" != "error" ]; then
-    echo $pixmsg
+    echo "$pixmsg" | addstatdesc
   elif [ "$pixmsg" = "error" ]; then
     echo -n "<HTML><BODY>ERROR: No response from pixelserv."
     if [ "$pixstatus" = "up" ] &&  ! (echo "$FWBRIDGE" | grep -q lo) ; then
@@ -395,13 +480,14 @@ pixstat() {
     echo Running version of pixelserv does not support status reporting.
   fi
 }
-
+[ "$thisconfig" != "$lastconfig" ] && restartneeded=1
 [ "$web_refreshtime" -eq "$web_refreshtime" ] &> /dev/null && REFRESHTIME=$web_refreshtime || REFRESHTIME=120
 [ "$web_reportlines" -eq "$web_reportlines" ] &> /dev/null && reportlines=$web_reportlines || reportlines=100
 NEXTACTION=""
 action=""
 actionhtml="<br><i>please wait...</i>"
 blockedhosts="<b>logging not enabled - enable in dnsmasq for updated reports.</b>"
+[ "$logstatus" = "error" ] && blockedhosts="<b>dnsmasq logging is enabled but syslog and log-facility are both disabled</b>"
 resolvedhosts="$blockedhosts"
 blockwidth="100%"
 divfocus="#f6f6f6"
@@ -442,7 +528,7 @@ case $QUERY_STRING in
     statushtml="starting/updating adblock..."
     action="start"
   ;;
-  dodnsmasqtoggle)
+    dodnsmasqtoggle)
 	dnsmasqconf="/etc/dnsmasq.custom"
 	if grep -Fxq 'log-queries' $dnsmasqconf
 	then
@@ -488,10 +574,12 @@ case $QUERY_STRING in
   *)
     blockwidth="50%"
     actionhtml=$optionshtml
-    [ "$logging" = "1" ] && blockedhosts="recently blocked hosts:"
-    [ "$logging" = "1" ] && resolvedhosts="recently resolved hosts:"
+    [ "$logging" = "1" -a "$logstatus" != "error" ] && blockedhosts="recently blocked hosts:"
+    [ "$logging" = "1" -a "$logstatus" != "error" ] && resolvedhosts="recently resolved hosts:"
   ;;
 esac
+
+[ "$NEXTACTION$action" != "" ] && restartneeded=0
 
 if [ $REFRESHTIME -gt 0 ]; then
   refreshhtml="page will automatically <a href=\"$scriptname\">refresh</a> in <span id=\"timer\">$REFRESHTIME</span> seconds"
@@ -507,6 +595,16 @@ cat << EOF
 
 <script>
   $(pagescript)
+
+  var timeinfo ;
+  var restartneeded ;
+
+  function showRestart() {
+    if ( restartneeded == 1 ) {
+      document.getElementById("configstatus").innerHTML = "<B>Start/Update Adblock</B><br>configuration has changed since adblock was last run..." ;
+      document.getElementById("configstatus").style.color = "Red" ;
+    }
+  }
 
   function lineclick()
   {
@@ -533,7 +631,12 @@ cat << EOF
     xhr.send();
   }
 
-  window.onload = function() {
+  window.onload = function()
+  {
+        timeinfo = document.getElementById("configstatus").innerHTML;
+        restartneeded = 0$restartneeded ;
+        showRestart();
+
         var textareas = document.getElementsByTagName("textarea");
         for (var i = 0; i < textareas.length; i++) {
           textareas[i].onkeyup = isDirty;
@@ -542,6 +645,7 @@ cat << EOF
 
         var buttons = document.getElementsByTagName("button");
         for (var i = 0; i < buttons.length; i++) {
+          buttons[i].disabled = true;
           buttons[i].onclick = saveText;
         }
 
@@ -738,7 +842,7 @@ input[type="submit"], button {
 <body>
 <div id="banner">
   <div id="status">
-    <b title="release $release">adblock status:</b><br>
+    <b title="release $release/$webrelease">adblock status:</b><br>
     <span id="statustxt">
       $statushtml
    </span>
@@ -752,8 +856,8 @@ input[type="submit"], button {
   </div>
 
   <div id="time">
-    <b>time info:</b><br>
-    $(uptime)
+    <span id="configstatus"><b>time info:</b><br>
+    $(uptime)</span>
     <br><br><b>pixelserv info:</b>
     <br><span  id="pixstat">$pixmsg</span>
     <br><br>$refreshhtml
