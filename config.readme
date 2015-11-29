@@ -1,0 +1,73 @@
+#########################################################
+#							#
+# Common user set config options other than		#
+# SOURCES, WHITELIST, BLACKLIST				#
+# 							#
+# See script source for additional options		#
+#							#
+#########################################################
+
+
+# Frequency in seconds to refresh web page
+web_refreshtime=120
+
+# Number of lines to show in web reports
+web_reportlines=200
+
+# Add Adblock link to Tomato GUI  (1=add)
+tomatolink=1
+
+# enable logging - a value of "1" will add "log-queries" to $CONF
+# and restart dnsmasq if necessary
+#
+# has no effect if logging is already enabled in dnsmasq.conf
+dnsmasq_logqueries=""
+
+# !**** CAUTION ****!
+# dnsmasq_custom - use at your own risk
+#
+# value will be appended to $CONF as entered
+#
+# example:
+# dnsmasq_custom='
+# log-facility=/tmp/mylogfile
+# log-dhcp
+# log-queries
+# local-ttl=600
+# '
+#
+# !! do not use unless you know what you are doing !!
+#
+# dnsmasq is very sensitive and will not start with invalid entries, entries
+# that conflict with directives in the primary config, and some duplicated
+# entries
+#
+# no validation of the content is performed by adblock
+#
+# !**** CAUTION ****!
+dnsmasq_custom=""
+
+# additional options for wget
+wget_opts=""
+
+# list mode, see changelog
+LISTMODE="OPTIMIZE"
+
+# Where to setup pixelserv, default to using primary lan interface
+BRIDGE="$(nvram get lan_ifname)"
+
+# default to strict firewall rules, see changelog
+FWRULES=STRICT
+
+# default interface(s) for firewall rules, see changelog
+# supports multiple interfaces as well, ie: "br0 br1 br3"
+FWBRIDGE="br+ lo"
+
+# 0: disable pixelserv, 1-254: last octet of IP to run pixelserv on
+PIXEL_IP=254
+
+# additional options for pixelserv
+PIXEL_OPTS=""
+
+# 1: keep blocklist in RAM (e.g. for small JFFS)
+RAMLIST=0
